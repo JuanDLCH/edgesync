@@ -21,9 +21,22 @@ let named: [String: CGKeyCode] = ["left": 123, "right": 124, "down": 125, "up": 
 guard let key = named[args[2]] ?? CGKeyCode(args[2]) else { exit(2) }
 // Las flechas llevan además las banderas de tecla de función/teclado numérico, como las reales
 if (123...126).contains(key) { flags.insert(.maskSecondaryFn); flags.insert(.maskNumericPad) }
+// Pulsar también las teclas modificadoras (no solo marcar las banderas): los atajos del sistema,
+// como Ctrl+→ para cambiar de escritorio, miran el estado real de Control/Command.
 let src = CGEventSource(stateID: .hidSystemState)
-for down in [true, false] {
-    let e = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: down)
-    e?.flags = flags
+var mods: [(CGKeyCode, CGEventFlags)] = []
+if flags.contains(.maskControl) { mods.append((59, .maskControl)) }
+if flags.contains(.maskCommand) { mods.append((55, .maskCommand)) }
+if flags.contains(.maskAlternate) { mods.append((58, .maskAlternate)) }
+if flags.contains(.maskShift) { mods.append((56, .maskShift)) }
+var held: CGEventFlags = []
+func post(_ k: CGKeyCode, _ down: Bool, _ f: CGEventFlags) {
+    let e = CGEvent(keyboardEventSource: src, virtualKey: k, keyDown: down)
+    e?.flags = f
     e?.post(tap: .cghidEventTap)
+    usleep(8_000)
 }
+for (k, f) in mods { held.insert(f); post(k, true, held) }
+post(key, true, flags)
+post(key, false, flags)
+for (k, f) in mods.reversed() { held.remove(f); post(k, false, held) }
