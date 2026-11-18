@@ -65,6 +65,26 @@ func finish(_ image: CGImage?) {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { exit(0) }
 }
 
+// Cursor en cruz propio: líneas blancas con borde oscuro (se ve sobre cualquier fondo) y un hueco
+// en el centro para ver el pixel exacto
+let crossCursor: NSCursor = {
+    let size: CGFloat = 33, c = size / 2, gap: CGFloat = 3, arm: CGFloat = 14
+    let img = NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+        func lines() {
+            ctx.move(to: CGPoint(x: c - arm, y: c)); ctx.addLine(to: CGPoint(x: c - gap, y: c))
+            ctx.move(to: CGPoint(x: c + gap, y: c)); ctx.addLine(to: CGPoint(x: c + arm, y: c))
+            ctx.move(to: CGPoint(x: c, y: c - arm)); ctx.addLine(to: CGPoint(x: c, y: c - gap))
+            ctx.move(to: CGPoint(x: c, y: c + gap)); ctx.addLine(to: CGPoint(x: c, y: c + arm))
+        }
+        ctx.setLineCap(.square)
+        ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.75).cgColor); ctx.setLineWidth(3); lines(); ctx.strokePath()
+        ctx.setStrokeColor(NSColor.white.cgColor); ctx.setLineWidth(1); lines(); ctx.strokePath()
+        return true
+    }
+    return NSCursor(image: img, hotSpot: NSPoint(x: c, y: c))
+}()
+
 final class Overlay: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
@@ -85,11 +105,12 @@ final class ShotView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .crosshair) }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: crossCursor) }
+    override func cursorUpdate(with event: NSEvent) { crossCursor.set() }
     // mouseMoved en todos los monitores, no solo en la ventana que tiene el teclado
     override func updateTrackingAreas() {
         trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self))
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeAlways, .inVisibleRect, .cursorUpdate], owner: self))
     }
 
     var dragging: Bool {
@@ -150,12 +171,14 @@ final class ShotView: NSView {
         }
     }
 
-    override func mouseMoved(with e: NSEvent) { setHover(convert(e.locationInWindow, from: nil)) }
+    // el cursor se fija en cada movimiento: en ventanas sin foco macOS volvería a la flecha
+    override func mouseMoved(with e: NSEvent) { crossCursor.set(); setHover(convert(e.locationInWindow, from: nil)) }
     override func mouseDown(with e: NSEvent) {
         let p = convert(e.locationInWindow, from: nil)
         start = p; current = p
     }
     override func mouseDragged(with e: NSEvent) {
+        crossCursor.set()
         current = convert(e.locationInWindow, from: nil); needsDisplay = true
     }
     override func mouseUp(with e: NSEvent) {
@@ -194,6 +217,7 @@ let keyOverlay = overlays.first { NSMouseInRect(mouse, $0.frame, false) } ?? ove
 for o in overlays { o.orderFrontRegardless() }
 app.activate(ignoringOtherApps: true)
 keyOverlay?.makeKeyAndOrderFront(nil)
+crossCursor.set()
 if let v = keyOverlay?.contentView as? ShotView {
     keyOverlay?.makeFirstResponder(v)
     v.setHover(v.convert(keyOverlay!.mouseLocationOutsideOfEventStream, from: nil))
