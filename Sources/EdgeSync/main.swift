@@ -409,7 +409,8 @@ func settle(_ id: CGWindowID, old: CGRect? = nil, snapped: Bool = false) {
         userFloating.insert(id); saveFloating()
         log("settle \(id): flotante (toca \(touching) bordes)")
         // Salió del mosaico: las que quedan en ese monitor se reorganizan (prioridad del usuario)
-        if moved, !wasFloating, let old = old, let ovis = visibleRect(at: CGPoint(x: old.midX, y: old.midY)) { regrid(ovis) }
+        if moved, !wasFloating, let old = old, let ovis = visibleRect(at: CGPoint(x: old.midX, y: old.midY)),
+           looksTiled(old, ovis, snap.values.filter { $0.id != id }.map { $0.r }) { regrid(ovis) }   // solo si estaba encajada
         return
     }
     userFloating.remove(id); saveFloating()
@@ -968,6 +969,8 @@ func tick() {
         for (id, b) in baseline {
             guard let c = cur[id], c.r != b.r else { continue }
             if !isEdgeResize(b.r, c.r) { moving = true; log("mover \(id)"); return }
+            // una flotante (de app o del usuario) se redimensiona sola: no arrastra divisores
+            if isFloating(b) || userFloating.contains(id) { moving = true; log("redimensionar flotante \(id)"); return }
             target = b; findDividers(b)
             log("resize \(id) base=\(b.r) " + Edge.allCases.map { "\($0): mismo \(dividers[$0]!.same.count) otro \(dividers[$0]!.opp.count)" }.joined(separator: ", "))
             break

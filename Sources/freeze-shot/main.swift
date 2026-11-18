@@ -5,6 +5,7 @@
 //   completo · arrastrar = área · Esc = cancelar. Suena el obturador de macOS al capturar.
 // Necesita permiso de Grabación de pantalla (lo hereda de quien lo ejecuta, p. ej. skhd).
 import AppKit
+import ApplicationServices
 
 // ---------- Foto de cada monitor (screencapture -x, un archivo por monitor) ----------
 let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("freeze-shot-\(getpid())")
@@ -62,7 +63,135 @@ func finish(_ image: CGImage?) {
     // quitar la foto congelada ya y dejar sonar el obturador (el mismo de las capturas de macOS)
     for o in overlays { o.orderOut(nil) }
     shutter?.play()
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { exit(0) }
+    resumeAutoRaise()
+    // archivo para poder editarla después (se borran los de más de un día)
+    let file = shotsDir.appendingPathComponent("Captura \(stamp()).png")
+    try? png.write(to: file)
+    showThumbnail(img, file: file)
+}
+
+// ---------- Después de capturar: miniatura → Vista Previa con Markup → portapapeles ----------
+let shotsDir: URL = {
+    // En una carpeta normal (Imágenes): en Caches, Vista Previa no edita el original y obliga a
+    // guardar una copia al cerrar
+    let d = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0].appendingPathComponent("freeze-shot")
+    try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+    for f in (try? FileManager.default.contentsOfDirectory(at: d, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
+        if let m = try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+           Date().timeIntervalSince(m) > 86_400 { try? FileManager.default.removeItem(at: f) }
+    }
+    return d
+}()
+func stamp() -> String {
+    let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd 'a las' HH.mm.ss"; return f.string(from: Date())
+}
+// El script de ⌥⇧S pausa AutoRaise mientras se elige; se reanuda en cuanto se captura (no al cerrar
+// el editor). Si EdgeSync lo tenía pausado por su cuenta, se respeta.
+func resumeAutoRaise() {
+    guard !FileManager.default.fileExists(atPath: "/tmp/edgesync-autoraise-paused") else { return }
+    let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/pkill"); p.arguments = ["-CONT", "-x", "AutoRaise"]
+    try? p.run()
+}
+
+final class ThumbView: NSImageView {
+    var onClick: () -> Void = {}
+    override func mouseDown(with event: NSEvent) { onClick() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+}
+
+var thumbWin: NSWindow? = nil
+func showThumbnail(_ img: CGImage, file: URL) {
+    let mouse = NSEvent.mouseLocation
+    let scr = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.screens[0]
+    let maxW: CGFloat = 240, maxH: CGFloat = 160
+    let ratio = CGFloat(img.width) / CGFloat(img.height)
+    var size = NSSize(width: maxW, height: maxW / ratio)
+    if size.height > maxH { size = NSSize(width: maxH * ratio, height: maxH) }
+    let vf = scr.visibleFrame
+    let frame = NSRect(x: vf.minX + 20, y: vf.minY + 20, width: size.width, height: size.height)   // abajo a la izquierda
+    let w = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+    w.level = .floating; w.isOpaque = false; w.backgroundColor = .clear; w.hasShadow = true
+    w.collectionBehavior = [.canJoinAllSpaces, .transient]
+    let v = ThumbView(frame: NSRect(origin: .zero, size: size))
+    v.image = NSImage(cgImage: img, size: size)
+    v.imageScaling = .scaleProportionallyUpOrDown
+    v.wantsLayer = true
+    v.layer?.cornerRadius = 8; v.layer?.masksToBounds = true
+    v.layer?.borderWidth = 1; v.layer?.borderColor = NSColor.white.withAlphaComponent(0.6).cgColor
+    v.onClick = { thumbWin?.orderOut(nil); openInMarkup(file) }
+    w.contentView = v
+    w.orderFrontRegardless()
+    thumbWin = w
+    // sin clic en ~5 s: desaparece y termina (la captura ya está en el portapapeles)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+        if !editing { thumbWin?.orderOut(nil); exit(0) }
+    }
+}
+
+var editing = false
+let previewID = "com.apple.Preview"
+
+// Abre la captura en Vista Previa con la barra de Markup y, cada vez que se guarda (Vista Previa
+// guarda sola al cerrar con Cmd+W), copia la versión editada al portapapeles. Termina cuando
+// Vista Previa ya no tiene abierta la captura.
+func openInMarkup(_ file: URL) {
+    editing = true
+    let cfg = NSWorkspace.OpenConfiguration()
+    cfg.activates = true
+    guard let preview = NSWorkspace.shared.urlForApplication(withBundleIdentifier: previewID) else { exit(0) }
+    NSWorkspace.shared.open([file], withApplicationAt: preview, configuration: cfg) { app, _ in
+        guard let pid = app?.processIdentifier else { return }
+        // Cmd+Shift+A = mostrar la barra de Markup (cuando la ventana ya esté lista)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            let axApp = AXUIElementCreateApplication(pid)
+            AXUIElementSetAttributeValue(axApp, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+            let src = CGEventSource(stateID: .hidSystemState)
+            for down in [true, false] {
+                let e = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: down)   // A
+                e?.flags = [.maskCommand, .maskShift]
+                e?.postToPid(pid)
+            }
+        }
+    }
+    var lastMod = modDate(file)
+    var sawWindow = false
+    let started = Date()
+    Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { t in
+        let m = modDate(file)
+        if m != lastMod, let d = try? Data(contentsOf: file), !d.isEmpty {
+            lastMod = m
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setData(d, forType: .png)
+        }
+        let open = previewHasFile(file)
+        if open { sawWindow = true }
+        // cerrada (o 30 min sin cerrar): última copia y salir
+        if (sawWindow && !open) || Date().timeIntervalSince(started) > 1800 || (!sawWindow && Date().timeIntervalSince(started) > 15) {
+            t.invalidate()
+            if let d = try? Data(contentsOf: file), !d.isEmpty, modDate(file) != nil {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setData(d, forType: .png)
+            }
+            exit(0)
+        }
+    }
+}
+func modDate(_ f: URL) -> Date? { try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
+// ¿Vista Previa tiene una ventana con este archivo? (atributo AXDocument de sus ventanas)
+func previewHasFile(_ file: URL) -> Bool {
+    guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: previewID).first else { return false }
+    var v: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(app.processIdentifier), kAXWindowsAttribute as CFString, &v) == .success,
+          let wins = v as? [AXUIElement] else { return false }
+    let name = file.lastPathComponent
+    for w in wins {
+        var doc: CFTypeRef?, title: CFTypeRef?
+        AXUIElementCopyAttributeValue(w, kAXDocumentAttribute as CFString, &doc)
+        AXUIElementCopyAttributeValue(w, kAXTitleAttribute as CFString, &title)
+        if let d = doc as? String, d.removingPercentEncoding?.hasSuffix(name) == true || d.hasSuffix(name) { return true }
+        if let t = title as? String, t.hasPrefix((name as NSString).deletingPathExtension) { return true }
+    }
+    return false
 }
 
 // Cursor en cruz propio: líneas blancas con borde oscuro (se ve sobre cualquier fondo) y un hueco

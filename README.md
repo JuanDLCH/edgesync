@@ -66,6 +66,9 @@ displays and moves the mouse to its centre (so focus-follows-mouse doesn't take 
 `freeze-shot` takes a screenshot of a frozen screen (everything stops while you choose): hover
 highlights the window under the mouse, click = that window, click on the menu bar = the whole
 display, drag = area, Esc = cancel. The PNG goes to the clipboard, with the macOS shutter sound.
+A thumbnail shows bottom-left for ~5 s: click it to edit in Preview with Markup; closing Preview
+(Cmd+W) saves in place and the edited image replaces the clipboard. Captures live in
+`~/Pictures/freeze-shot` and are deleted after a day untouched.
 Needs Screen Recording permission (inherited from whatever runs it, e.g. skhd).
 
 Hotkeys with skhd: `alt - g : ~/.local/bin/win-grid` `alt - f : ~/.local/bin/win-grid max` and `ctrl + alt - left : ~/.local/bin/win-grid focus left` (etc.), `alt + shift - s : ~/.local/bin/freeze-shot`.
