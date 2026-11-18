@@ -759,14 +759,23 @@ func resolveAfterResize(_ t: W) {
 // la celda según la zona de la pantalla donde se suelta el mouse (ver abajo).
 let edgeZone: CGFloat = 12       // px desde el borde de la pantalla
 let sideZone: CGFloat = 0.25     // fracción del ancho que cuenta como lado izquierdo/derecho
-func snapTarget() -> (W, CGRect)? {
+// La ventana que el usuario está moviendo: la de la app activa cuya posición cambió
+func movedWindow() -> W? {
     let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
     let cur = snapshot()
-    guard let moved = baseline.values.compactMap({ b -> W? in
+    return baseline.values.compactMap({ b -> W? in
         guard let c = cur[b.id], b.pid == front,
               abs(c.r.minX - b.r.minX) > 20 || abs(c.r.minY - b.r.minY) > 20 else { return nil }
         return W(id: b.id, pid: b.pid, r: b.r)
-    }).first, !isFloating(moved) else { return nil }
+    }).first
+}
+func snapTarget() -> (W, CGRect)? {
+    guard let moved = movedWindow(), !isFloating(moved), let c = cellAtMouse() else { return nil }
+    return (moved, c)
+}
+
+// Celda de encaje según dónde está el mouse (nil = ninguna)
+func cellAtMouse() -> CGRect? {
     let mainH = NSScreen.screens[0].frame.height
     let m = NSEvent.mouseLocation
     let p = CGPoint(x: m.x, y: mainH - m.y)
@@ -794,8 +803,35 @@ func snapTarget() -> (W, CGRect)? {
     case (1, 1):   cell = BR
     default:       cell = p.y - vis.minY <= edgeZone ? v : nil
     }
-    guard let c = cell else { return nil }
-    return (moved, c)
+    return cell
+}
+
+// ---------- Vista previa del encaje (mientras se arrastra con ⌥) ----------
+var previewWin: NSWindow? = nil
+var previewShown: CGRect? = nil
+func showPreview(_ r: CGRect) {
+    if previewShown == r { return }
+    if previewWin == nil {
+        let w = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
+        w.isOpaque = false; w.backgroundColor = .clear; w.hasShadow = false
+        w.level = .floating; w.ignoresMouseEvents = true
+        w.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
+        let v = NSView(); v.wantsLayer = true
+        let purple = NSColor(red: 0xbb / 255.0, green: 0x9a / 255.0, blue: 0xf7 / 255.0, alpha: 1)
+        v.layer?.backgroundColor = purple.withAlphaComponent(0.18).cgColor
+        v.layer?.borderColor = purple.withAlphaComponent(0.9).cgColor
+        v.layer?.borderWidth = 2; v.layer?.cornerRadius = 10
+        w.contentView = v
+        previewWin = w
+    }
+    let mainH = NSScreen.screens[0].frame.height
+    previewWin!.setFrame(NSRect(x: r.minX, y: mainH - r.maxY, width: r.width, height: r.height), display: true)
+    previewWin!.orderFrontRegardless()
+    previewShown = r
+}
+func hidePreview() {
+    guard previewShown != nil else { return }
+    previewWin?.orderOut(nil); previewShown = nil
 }
 
 func tick() {
@@ -809,6 +845,8 @@ func tick() {
     }
     if !down && dragging {
         lastDragEnd = Date()
+        hidePreview()
+        let altAtRelease = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate)
         // fin del arrastre: un último ajuste con el tamaño final
         if let t = target, !moving, let now = snapshot()[t.id]?.r, isEdgeResize(t.r, now) {
             apply(now); log("fin \(t.id) \(now)")
@@ -817,7 +855,8 @@ func tick() {
         }
         // ¿Se movió una ventana y se soltó con el mouse en un borde? → encajarla (reemplaza al
         // mosaico nativo, que está apagado: macOS deshacía lo que EdgeSync acomodaba)
-        if target == nil, let (w, cell) = snapTarget() {
+        // Encajar solo con ⌥ (se ve la vista previa); sin ⌥ la ventana se mueve libre (flotante)
+        if target == nil, altAtRelease, let (w, cell) = snapTarget() {
             log("encajar \(w.id) -> \(cell)")
             var got = place(w, cell)
             // No cabe en la celda (tamaño mínimo, p. ej. Spotify ≥ 600 px de alto): pegarla a la
@@ -846,6 +885,11 @@ func tick() {
         if pollCount % 6 == 0 { watch() }   // ~240 ms
         return
     }
+    // ⌥ presionado mientras se arrastra: mostrar dónde quedaría la ventana
+    // (solo si de verdad se está moviendo una ventana: ⌥ + arrastrar texto no muestra nada)
+    if CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate),
+       let c = cellAtMouse(), let mw = movedWindow(), !isFloating(mw) { showPreview(c) }
+    else { hidePreview() }
     if moving { return }
     let cur = snapshot()
     if target == nil {
@@ -881,4 +925,6 @@ NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTermin
 }
 signalAutoRaise("-CONT")   // por si EdgeSync se cerró con AutoRaise en pausa
 Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { _ in tick() }
-RunLoop.main.run()
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)   // sin ícono en el Dock ni menú
+app.run()

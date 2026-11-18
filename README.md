@@ -6,9 +6,10 @@ SIP**. You place windows yourself; EdgeSync keeps them together:
 - **Shared edges**: drag the edge between two windows and every window on that divider follows
   (the ones aligned in the same column/row and the ones on the other side). Windows with a minimum
   size stop the divider instead of being overlapped.
-- **Snap on drop**: drop a window with the mouse in the left/right quarter of the screen → top
-  third = quarter, middle = full-height column, bottom third = quarter. Centre touching the top =
-  full screen. Anywhere else = floating.
+- **Snap with ⌥**: drag a window holding ⌥ and a translucent preview shows where it will land; drop
+  with ⌥ held to snap. Zones by mouse position: left/right quarter of the screen → top third =
+  quarter, middle = full-height column, bottom third = quarter; centre touching the top = full
+  screen. Without ⌥ (or outside the zones) the window just moves and becomes floating.
 - **Make room**: windows covered by the dropped one shrink on the axis where they lose least;
   dropping onto an occupied cell splits it in two (the new window takes the half under the mouse).
 - **Floating windows**: a window dropped outside the zones is remembered as floating; the tiled
