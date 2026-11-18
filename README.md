@@ -55,6 +55,9 @@ git clone https://github.com/JuanDLCH/edgesync && cd edgesync
 Then allow **EdgeSync** in System Settings → Privacy & Security → Accessibility (it asks on first
 start) and restart it: `launchctl kickstart -k gui/$(id -u)/local.edgesync`.
 
+`send-key <mods> <key>` posts a key combination instantly (e.g. `send-key ctrl right` to switch
+Spaces from a mouse button), much faster than `osascript` + System Events.
+
 Hotkeys with skhd: `alt - g : ~/.local/bin/win-grid` and `alt - f : ~/.local/bin/win-grid max`.
 
 ### Why `make-cert.sh`
