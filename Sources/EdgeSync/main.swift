@@ -413,17 +413,12 @@ func settle(_ id: CGWindowID, old: CGRect? = nil, snapped: Bool = false) {
         return
     }
     userFloating.remove(id); saveFloating()
-    // Se movió de un sitio encajado a otro: las vecinas ocupan el hueco que dejó
-    if moved, !wasFloating, let old = old, let ovis = visibleRect(at: CGPoint(x: old.midX, y: old.midY)) {
-        let there = snap.values.filter { $0.id != id && ovis.contains(CGPoint(x: $0.r.midX, y: $0.r.midY)) && !isFloating($0) && !userFloating.contains($0.id) }
-        log("hueco \(old)")
-        fillHole(old, there, ovis)
-    }
     let others = snapshot().values.filter { $0.id != id && vis.contains(CGPoint(x: $0.r.midX, y: $0.r.midY)) && !isFloating($0) && !userFloating.contains($0.id) }
     log("settle \(id) \(T)")
 
     // 1. Choques: la de debajo cede por el eje donde pierde menos; si no puede, cede la puesta
     var placed: [CGWindowID: CGRect] = [:]
+    var swapped = false
     for o in others where intersects(T, o.r) {
         var cands: [(CGRect, Edge)] = []
         if o.r.midX < T.midX { cands.append((with(o.r, .right, T.minX - gap), .right)) }
@@ -470,12 +465,32 @@ func settle(_ id: CGWindowID, old: CGRect? = nil, snapped: Bool = false) {
             case .bottom: T = with(T, .top, got.maxY + gap)
             case .top:    T = with(T, .bottom, got.minY - gap)
             }
-            if T.width < 200 || T.height < 200 {   // no aplastar la ventana que el usuario puso
-                T = before; log("  mínimo de \(o.id): no cabe, la puesta se queda como está")
+            if T.width < 200 || T.height < 200 {
+                // No caben juntas (sus mínimos suman más que el espacio): intercambiarlas, como
+                // Hyprland. La puesta ocupa el sitio completo de la otra; la otra va a donde
+                // estaba la puesta (si venía de otro sitio encajado del mismo monitor).
+                T = before
+                if moved, !wasFloating, let old = old, vis.contains(CGPoint(x: old.midX, y: old.midY)) {
+                    T = o.r
+                    let g2 = place(o, old); placed[o.id] = g2; swapped = true
+                    log("  no caben juntas: intercambio con \(o.id) -> puesta \(T), otra -> \(g2)")
+                } else {
+                    T = o.r
+                    let g2 = place(o, before); placed[o.id] = g2; swapped = true
+                    log("  no caben juntas: \(o.id) pasa al sitio de la puesta -> \(g2)")
+                }
             } else {
                 log("  mínimo de \(o.id): la puesta queda \(T)")
             }
         }
+    }
+
+    // Se movió de un sitio encajado a otro: las vecinas ocupan el hueco que dejó (si no hubo
+    // intercambio, que ya lo ocupó la otra)
+    if moved, !wasFloating, !swapped, let old = old, let ovis = visibleRect(at: CGPoint(x: old.midX, y: old.midY)) {
+        let there = snapshot().values.filter { $0.id != id && ovis.contains(CGPoint(x: $0.r.midX, y: $0.r.midY)) && !isFloating($0) && !userFloating.contains($0.id) }
+        log("hueco \(old)")
+        fillHole(old, there, ovis)
     }
 
     // 2. Huecos pequeños: estirar la puesta hasta la vecina o el borde de la pantalla
@@ -826,6 +841,7 @@ func cellAtMouse() -> CGRect? {
 // ---------- Vista previa del encaje (mientras se arrastra con ⌥) ----------
 var previewWin: NSWindow? = nil
 var previewShown: CGRect? = nil
+var lastAlt = false
 func showPreview(_ r: CGRect) {
     if previewShown == r { return }
     if previewWin == nil {
@@ -845,10 +861,12 @@ func showPreview(_ r: CGRect) {
     previewWin!.setFrame(NSRect(x: r.minX, y: mainH - r.maxY, width: r.width, height: r.height), display: true)
     previewWin!.orderFrontRegardless()
     previewShown = r
+    log("vista previa \(r)")
 }
 func hidePreview() {
     guard previewShown != nil else { return }
     previewWin?.orderOut(nil); previewShown = nil
+    log("vista previa oculta")
 }
 
 func tick() {
@@ -904,8 +922,9 @@ func tick() {
     }
     // ⌥ presionado mientras se arrastra: mostrar dónde quedaría la ventana
     // (solo si de verdad se está moviendo una ventana: ⌥ + arrastrar texto no muestra nada)
-    if CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate),
-       let c = cellAtMouse(), let mw = movedWindow(), !isFloating(mw) { showPreview(c) }
+    let altNow = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate)
+    if altNow != lastAlt { log("⌥ \(altNow ? "presionada" : "suelta") durante el arrastre"); lastAlt = altNow }
+    if altNow, let c = cellAtMouse(), let mw = movedWindow(), !isFloating(mw) { showPreview(c) }
     else { hidePreview() }
     if moving { return }
     let cur = snapshot()
