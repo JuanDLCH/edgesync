@@ -18,15 +18,17 @@ CGGetActiveDisplayList(displayCount, &displays, &displayCount)
 
 // Ventanas visibles en el momento de congelar, de adelante hacia atrás (coordenadas globales,
 // arriba-izquierda). Solo apps normales: JankyBorders y similares también dibujan ventanas.
-let windowsAtFreeze: [CGRect] = {
+struct FrozenWin { let id: CGWindowID; let r: CGRect }
+let windowsAtFreeze: [FrozenWin] = {
     let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
     return info.compactMap { w in
         guard (w[kCGWindowLayer as String] as? Int) == 0,
               let pid = w[kCGWindowOwnerPID as String] as? pid_t,
               NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular,
               let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+              let id = w[kCGWindowNumber as String] as? CGWindowID,
               let x = b["X"], let y = b["Y"], let wd = b["Width"], let ht = b["Height"], wd > 40, ht > 40 else { return nil }
-        return CGRect(x: x, y: y, width: wd, height: ht)
+        return FrozenWin(id: id, r: CGRect(x: x, y: y, width: wd, height: ht))
     }
 }()
 
@@ -35,6 +37,26 @@ let cap = Process()
 cap.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
 cap.arguments = ["-x"] + files            // -x: sin sonido; un archivo por monitor, en el orden de la lista
 try? cap.run(); cap.waitUntilExit()
+
+// Cada ventana por separado (screencapture -l: solo esa ventana, sin lo que tenga encima), en
+// paralelo y en segundo plano mientras el usuario elige. -o: sin la sombra.
+let winDir = FileManager.default.temporaryDirectory.appendingPathComponent("freeze-shot-win-\(getpid())")
+try? FileManager.default.createDirectory(at: winDir, withIntermediateDirectories: true)
+var winProcs: [CGWindowID: Process] = [:]
+for w in windowsAtFreeze {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+    p.arguments = ["-x", "-o", "-l", String(w.id), winDir.appendingPathComponent("\(w.id).png").path]
+    try? p.run()
+    winProcs[w.id] = p
+}
+func windowImage(_ id: CGWindowID) -> CGImage? {
+    winProcs[id]?.waitUntilExit()                       // normalmente ya terminó
+    let f = winDir.appendingPathComponent("\(id).png")
+    defer { try? FileManager.default.removeItem(at: winDir) }
+    guard let src = CGImageSourceCreateWithURL(f as CFURL, nil) else { return nil }
+    return CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+}
 
 var shots: [CGDirectDisplayID: CGImage] = [:]
 for (i, d) in displays.enumerated() {
@@ -57,6 +79,7 @@ var overlays: [NSWindow] = []
 let shutter = NSSound(contentsOfFile: "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif", byReference: true)
 
 func finish(_ image: CGImage?) {
+    try? FileManager.default.removeItem(at: winDir)   // capturas por ventana que no se usaron
     guard let img = image, let png = NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:]) else { exit(1) }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setData(png, forType: .png)
@@ -108,7 +131,7 @@ func showThumbnail(_ img: CGImage, file: URL) {
     var size = NSSize(width: maxW, height: maxW / ratio)
     if size.height > maxH { size = NSSize(width: maxH * ratio, height: maxH) }
     let vf = scr.visibleFrame
-    let frame = NSRect(x: vf.minX + 20, y: vf.minY + 20, width: size.width, height: size.height)   // abajo a la izquierda
+    let frame = NSRect(x: vf.minX + 48, y: vf.minY + 48, width: size.width, height: size.height)   // abajo a la izquierda
     let w = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
     w.level = .floating; w.isOpaque = false; w.backgroundColor = .clear; w.hasShadow = true
     w.collectionBehavior = [.canJoinAllSpaces, .transient]
@@ -287,7 +310,7 @@ final class ShotView: NSView {
 
     func windowAt(_ p: NSPoint) -> NSRect? {
         let g = CGPoint(x: screenFrame.minX + p.x, y: mainH - (screenFrame.minY + p.y))   // global arriba-izq
-        guard let w = windowsAtFreeze.first(where: { $0.contains(g) }) else { return nil }
+        guard let w = windowsAtFreeze.first(where: { $0.r.contains(g) })?.r else { return nil }
         let r = NSRect(x: w.minX - screenFrame.minX, y: (mainH - w.maxY) - screenFrame.minY, width: w.width, height: w.height)
         return r.intersection(bounds)                  // solo la parte de este monitor
     }
@@ -313,8 +336,15 @@ final class ShotView: NSView {
     override func mouseUp(with e: NSEvent) {
         current = convert(e.locationInWindow, from: nil)
         if dragging, let sel = selection { finish(crop(sel)); return }
-        // clic sin arrastrar: la ventana bajo el mouse, o el monitor entero si es sobre la barra de menú
-        if let r = targetAt(current!) { finish(crop(r)) }
+        // clic sin arrastrar: la ventana bajo el mouse (su captura aislada, sin lo que tenga encima),
+        // o el monitor entero si es sobre la barra de menú
+        let p = current!
+        if let r = targetAt(p) {
+            if r == bounds { finish(crop(r)); return }
+            let g = CGPoint(x: screenFrame.minX + p.x, y: mainH - (screenFrame.minY + p.y))
+            if let w = windowsAtFreeze.first(where: { $0.r.contains(g) }), let img = windowImage(w.id) { finish(img); return }
+            finish(crop(r))                            // si falló la captura aislada: recorte de la foto
+        }
         start = nil; current = nil; needsDisplay = true
     }
     override func keyDown(with e: NSEvent) {
