@@ -20,6 +20,59 @@ let floating: Set<String> = ["com.apple.systempreferences", "com.apple.calculato
 
 struct W { let id: CGWindowID; let pid: pid_t; let r: CGRect }
 
+// ---------- win-grid max: ampliar la ventana enfocada sobre las demás / devolverla ----------
+// No es pantalla completa de macOS: la ventana ocupa el área útil de su monitor (con márgenes),
+// encima de las otras. Otra vez → vuelve a donde estaba (se guarda en /tmp/win-grid-max).
+func setFrame(_ a: AXUIElement, _ r: CGRect) {
+    var p = r.origin, s = r.size
+    if let sv = AXValueCreate(.cgSize, &s) { AXUIElementSetAttributeValue(a, kAXSizeAttribute as CFString, sv) }
+    if let pv = AXValueCreate(.cgPoint, &p) { AXUIElementSetAttributeValue(a, kAXPositionAttribute as CFString, pv) }
+    if let sv = AXValueCreate(.cgSize, &s) { AXUIElementSetAttributeValue(a, kAXSizeAttribute as CFString, sv) }
+}
+func frameOf(_ a: AXUIElement) -> CGRect? {
+    var pv: CFTypeRef?, sv: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(a, kAXPositionAttribute as CFString, &pv) == .success,
+          AXUIElementCopyAttributeValue(a, kAXSizeAttribute as CFString, &sv) == .success else { return nil }
+    var p = CGPoint.zero, s = CGSize.zero
+    AXValueGetValue(pv as! AXValue, .cgPoint, &p); AXValueGetValue(sv as! AXValue, .cgSize, &s)
+    return CGRect(origin: p, size: s)
+}
+if CommandLine.arguments.contains("max") {
+    var app: CFTypeRef?, win: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(AXUIElementCreateSystemWide(), kAXFocusedApplicationAttribute as CFString, &app) == .success,
+          AXUIElementCopyAttributeValue(app as! AXUIElement, kAXFocusedWindowAttribute as CFString, &win) == .success else { exit(1) }
+    let a = win as! AXUIElement
+    var id: CGWindowID = 0
+    guard _AXUIElementGetWindow(a, &id) == .success, let cur = frameOf(a) else { exit(1) }
+    // Área útil del monitor donde está la ventana (misma regla de márgenes que el resto)
+    let mh = NSScreen.screens[0].frame.height
+    let c = NSPoint(x: cur.midX, y: mh - cur.midY)
+    let scr = NSScreen.screens.first { NSMouseInRect(c, $0.frame, false) } ?? NSScreen.screens[0]
+    let barH = NSScreen.screens.map { $0.frame.maxY - $0.visibleFrame.maxY }.max() ?? 0
+    let t = mh - scr.frame.maxY + max(barH, scr.frame.maxY - scr.visibleFrame.maxY)
+    let b = mh - scr.visibleFrame.minY
+    let area = CGRect(x: scr.visibleFrame.minX + margin, y: t, width: scr.visibleFrame.width - 2 * margin, height: b - margin - t)
+
+    let file = "/tmp/win-grid-max"
+    var saved: [CGWindowID: CGRect] = [:]
+    for l in ((try? String(contentsOfFile: file, encoding: .utf8)) ?? "").split(separator: "\n") {
+        let f = l.split(separator: " ").compactMap { Double($0) }
+        if f.count == 5 { saved[CGWindowID(f[0])] = CGRect(x: f[1], y: f[2], width: f[3], height: f[4]) }
+    }
+    let isMax = abs(cur.minX - area.minX) < 12 && abs(cur.minY - area.minY) < 12 &&
+                abs(cur.width - area.width) < 12 && abs(cur.height - area.height) < 12
+    if isMax, let back = saved[id] {
+        setFrame(a, back); saved[id] = nil
+    } else {
+        saved[id] = cur
+        setFrame(a, area)
+        AXUIElementPerformAction(a, kAXRaiseAction as CFString)
+    }
+    let out = saved.map { "\($0.key) \($0.value.minX) \($0.value.minY) \($0.value.width) \($0.value.height)" }.joined(separator: "\n")
+    try? out.write(toFile: file, atomically: true, encoding: .utf8)
+    exit(0)
+}
+
 // Monitor bajo el mouse (coordenadas arriba-izquierda)
 let mainH = NSScreen.screens[0].frame.height
 func tl(_ f: NSRect) -> CGRect { CGRect(x: f.minX, y: mainH - f.maxY, width: f.width, height: f.height) }

@@ -28,6 +28,10 @@ SIP**. You place windows yourself; EdgeSync keeps them together:
 
 Each window goes to the cell closest to where it is. Floating windows (app or user) are skipped.
 
+`win-grid max` toggles the focused window between its own frame and the whole usable area of its
+display (on top of the others, not macOS full screen); the previous frame is kept in
+`/tmp/win-grid-max`.
+
 It only reacts to what you do with the mouse: nothing happens when apps open windows or resize
 themselves. Idle cost is about 0.3 % CPU (polling the mouse button and the window list).
 
@@ -51,7 +55,7 @@ git clone https://github.com/JuanDLCH/edgesync && cd edgesync
 Then allow **EdgeSync** in System Settings → Privacy & Security → Accessibility (it asks on first
 start) and restart it: `launchctl kickstart -k gui/$(id -u)/local.edgesync`.
 
-Hotkey for `win-grid` with skhd: `alt - g : ~/.local/bin/win-grid`.
+Hotkeys with skhd: `alt - g : ~/.local/bin/win-grid` and `alt - f : ~/.local/bin/win-grid max`.
 
 ### Why `make-cert.sh`
 
