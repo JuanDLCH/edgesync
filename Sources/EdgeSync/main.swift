@@ -475,9 +475,19 @@ func settle(_ id: CGWindowID, old: CGRect? = nil, snapped: Bool = false) {
                     let g2 = place(o, old); placed[o.id] = g2; swapped = true
                     log("  no caben juntas: intercambio con \(o.id) -> puesta \(T), otra -> \(g2)")
                 } else {
+                    // La puesta venía flotando: la desplazada pasa a flotar donde estaba la puesta
+                    // (con su propio tamaño, dentro de la pantalla), visible encima
                     T = o.r
-                    let g2 = place(o, before); placed[o.id] = g2; swapped = true
-                    log("  no caben juntas: \(o.id) pasa al sitio de la puesta -> \(g2)")
+                    let from = old ?? before
+                    var r = CGRect(origin: from.origin, size: o.r.size)
+                    if let ov = visibleRect(at: CGPoint(x: from.midX, y: from.midY)) {
+                        r.origin.x = min(max(r.minX, ov.minX), ov.maxX - r.width)
+                        r.origin.y = min(max(r.minY, ov.minY), ov.maxY - r.height)
+                    }
+                    let g2 = place(o, r); placed[o.id] = g2; swapped = true
+                    userFloating.insert(o.id); saveFloating()
+                    if let a = axWindow(o) { AXUIElementPerformAction(a, kAXRaiseAction as CFString) }
+                    log("  no caben juntas: \(o.id) pasa a flotar donde estaba la puesta -> \(g2)")
                 }
             } else {
                 log("  mínimo de \(o.id): la puesta queda \(T)")
