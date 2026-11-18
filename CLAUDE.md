@@ -38,7 +38,7 @@ them first. `rm /tmp/edgesync.debug` when done.
 
 ## Architecture
 
-Three independent executables, each one `main.swift` compiled alone with `swiftc` (no shared module,
+Four independent executables, each one `main.swift` compiled alone with `swiftc` (no shared module,
 so helpers like `usable()`/margins are duplicated and must be kept in sync):
 
 - **`Sources/EdgeSync`** — the daemon (`LSUIElement` app, LaunchAgent `local.edgesync`, runs an
@@ -49,6 +49,11 @@ so helpers like `usable()`/margins are duplicated and must be kept in sync):
   `focus <dir>` focuses the nearest window in a direction across displays and warps the mouse to it;
   `-v` lists only. Activating another app from a background process must go through AX
   (`kAXFrontmostAttribute`): `NSRunningApplication.activate()` is silently ignored.
+- **`Sources/freeze-shot`** — frozen-screen screenshot: `screencapture -x` one PNG per display (decode
+  immediately with `kCGImageSourceShouldCacheImmediately`, the temp files are deleted right after),
+  full-screen `.screenSaver` overlays per display, click = window under the mouse (CGWindowList at
+  freeze time), menu bar = whole display, drag = area, Esc = cancel. Needs Screen Recording, which
+  the Claude Code terminal doesn't have: only testable through skhd.
 - **`Sources/send-key`** — CLI that posts a key combo with real modifier key presses (system shortcuts
   such as Ctrl+→ for Spaces ignore flag-only events).
 

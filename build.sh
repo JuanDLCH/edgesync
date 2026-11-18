@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds EdgeSync.app into ~/Applications and win-grid + send-key into ~/.local/bin.
+# Builds EdgeSync.app into ~/Applications and win-grid, send-key and freeze-shot into ~/.local/bin.
 # Signing: if a code-signing identity named "EdgeSync Local" exists (see README), it is used so the
 # Accessibility grant survives rebuilds; otherwise the app is signed ad hoc and macOS drops the
 # grant on every rebuild.
@@ -10,6 +10,7 @@ mkdir -p build ~/Applications ~/.local/bin
 swiftc -O -o build/EdgeSync Sources/EdgeSync/main.swift
 swiftc -O -o build/win-grid Sources/win-grid/main.swift
 swiftc -O -o build/send-key Sources/send-key/main.swift
+swiftc -O -o build/freeze-shot Sources/freeze-shot/main.swift
 
 A=~/Applications/EdgeSync.app/Contents
 rm -rf ~/Applications/EdgeSync.app && mkdir -p "$A/MacOS"
@@ -31,5 +32,5 @@ if security find-certificate -c "EdgeSync Local" >/dev/null 2>&1; then
 else
   codesign --force --sign - ~/Applications/EdgeSync.app
 fi
-cp build/win-grid build/send-key ~/.local/bin/
-echo "Built ~/Applications/EdgeSync.app, ~/.local/bin/win-grid and ~/.local/bin/send-key"
+cp build/win-grid build/send-key build/freeze-shot ~/.local/bin/
+echo "Built ~/Applications/EdgeSync.app, ~/.local/bin/{win-grid,send-key,freeze-shot}"
