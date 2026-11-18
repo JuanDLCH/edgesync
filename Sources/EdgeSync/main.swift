@@ -388,7 +388,7 @@ func fillHole(_ old: CGRect, _ others: [W], _ vis: CGRect) {
 
 var lastDragEnd = Date.distantPast   // cuándo soltó el usuario el botón tras arrastrar
 
-func settle(_ id: CGWindowID, old: CGRect? = nil) {
+func settle(_ id: CGWindowID, old: CGRect? = nil, snapped: Bool = false) {
     // Solo como reacción a un arrastre del usuario. Si una app cambia de tamaño sola (o abre una
     // ventana), no se marca nada como flotante ni se reacomoda.
     guard Date().timeIntervalSince(lastDragEnd) < 2.0 else { log("settle \(id): ignorado (no lo arrastró el usuario)"); return }
@@ -404,7 +404,7 @@ func settle(_ id: CGWindowID, old: CGRect? = nil) {
         .filter { $0 <= snapTol }.count
     let wasFloating = userFloating.contains(id)
     let moved = old.map { abs($0.midX - t.r.midX) > 60 || abs($0.midY - t.r.midY) > 60 } ?? false
-    if touching < 2 {
+    if touching < 2 && !snapped {   // la encajó el usuario: nunca es flotante, aunque no quepa
         userFloating.insert(id); saveFloating()
         log("settle \(id): flotante (toca \(touching) bordes)")
         // Salió del mosaico: las que quedan en ese monitor se reorganizan (prioridad del usuario)
@@ -819,11 +819,21 @@ func tick() {
         // mosaico nativo, que está apagado: macOS deshacía lo que EdgeSync acomodaba)
         if target == nil, let (w, cell) = snapTarget() {
             log("encajar \(w.id) -> \(cell)")
-            let got = place(w, cell)
+            var got = place(w, cell)
+            // No cabe en la celda (tamaño mínimo, p. ej. Spotify ≥ 600 px de alto): pegarla a la
+            // esquina/borde elegido; las vecinas le ceden lo que falta en settle()
+            if got.width > cell.width + 4 || got.height > cell.height + 4,
+               let wa = visibleRect(at: CGPoint(x: cell.midX, y: cell.midY)).map(work) {
+                var o = cell.origin
+                if got.width > cell.width + 4 && abs(cell.maxX - wa.maxX) < 4 { o.x = wa.maxX - got.width }
+                if got.height > cell.height + 4 && abs(cell.maxY - wa.maxY) < 4 { o.y = wa.maxY - got.height }
+                got = place(w, CGRect(origin: o, size: got.size))
+                log("  no cabe (mínimo): anclada -> \(got)")
+            }
             log("  encajada -> \(got)")
             let old = w.r, id = w.id
             dragging = false; target = nil; moving = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { settle(id, old: old); prev = snapshot() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { settle(id, old: old, snapped: true); prev = snapshot() }
             prev = baseline
             return
         }
