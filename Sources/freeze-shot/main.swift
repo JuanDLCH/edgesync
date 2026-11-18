@@ -126,7 +126,7 @@ var thumbWin: NSWindow? = nil
 func showThumbnail(_ img: CGImage, file: URL) {
     let mouse = NSEvent.mouseLocation
     let scr = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.screens[0]
-    let maxW: CGFloat = 240, maxH: CGFloat = 160
+    let maxW: CGFloat = 360, maxH: CGFloat = 240
     let ratio = CGFloat(img.width) / CGFloat(img.height)
     var size = NSSize(width: maxW, height: maxW / ratio)
     if size.height > maxH { size = NSSize(width: maxH * ratio, height: maxH) }
