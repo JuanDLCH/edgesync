@@ -46,7 +46,9 @@ so helpers like `usable()`/margins are duplicated and must be kept in sync):
   (`tick`) polls the mouse button; while idle every 6th tick runs `watch()` (~240 ms).
 - **`Sources/win-grid`** — CLI run by skhd (inherits skhd's Accessibility). Re-lays out the display
   under the mouse; `max` toggles the focused window to the full work area (state in `/tmp/win-grid-max`);
-  `-v` lists only.
+  `focus <dir>` focuses the nearest window in a direction across displays and warps the mouse to it;
+  `-v` lists only. Activating another app from a background process must go through AX
+  (`kAXFrontmostAttribute`): `NSRunningApplication.activate()` is silently ignored.
 - **`Sources/send-key`** — CLI that posts a key combo with real modifier key presses (system shortcuts
   such as Ctrl+→ for Spaces ignore flag-only events).
 

@@ -596,6 +596,7 @@ var popupTurn = false
 
 func focusAndPoint(pid: pid_t, id: CGWindowID, rect: CGRect) {
     NSRunningApplication(processIdentifier: pid)?.activate()
+    AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
     var v: CFTypeRef?
     if AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXWindowsAttribute as CFString, &v) == .success,
        let wins = v as? [AXUIElement],

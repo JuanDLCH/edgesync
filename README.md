@@ -60,7 +60,10 @@ start) and restart it: `launchctl kickstart -k gui/$(id -u)/local.edgesync`.
 `send-key <mods> <key>` posts a key combination instantly (e.g. `send-key ctrl right` to switch
 Spaces from a mouse button), much faster than `osascript` + System Events.
 
-Hotkeys with skhd: `alt - g : ~/.local/bin/win-grid` and `alt - f : ~/.local/bin/win-grid max`.
+`win-grid focus left|right|up|down` focuses the nearest window in that direction across all
+displays and moves the mouse to its centre (so focus-follows-mouse doesn't take it back).
+
+Hotkeys with skhd: `alt - g : ~/.local/bin/win-grid` `alt - f : ~/.local/bin/win-grid max` and `ctrl + alt - left : ~/.local/bin/win-grid focus left` (etc.).
 
 ### Why `make-cert.sh`
 

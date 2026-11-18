@@ -37,6 +37,66 @@ func frameOf(_ a: AXUIElement) -> CGRect? {
     AXValueGetValue(pv as! AXValue, .cgPoint, &p); AXValueGetValue(sv as! AXValue, .cgSize, &s)
     return CGRect(origin: p, size: s)
 }
+// ---------- win-grid focus left|right|up|down: foco a la ventana más cercana en esa dirección ----------
+// Entre todas las ventanas visibles de todos los monitores (así cruza de pantalla). El mouse salta
+// al centro de la ventana nueva (si no, AutoRaise devolvería el foco a la que está bajo el mouse).
+if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "focus" {
+    let dir = CommandLine.arguments[2]
+    let mh = NSScreen.screens[0].frame.height
+    // ventana enfocada (si no hay, se parte de la posición del mouse)
+    var from = CGRect(x: NSEvent.mouseLocation.x, y: mh - NSEvent.mouseLocation.y, width: 1, height: 1)
+    var fromId: CGWindowID = 0
+    if let front = NSWorkspace.shared.frontmostApplication {
+        var win: CFTypeRef?
+        let appEl = AXUIElementCreateApplication(front.processIdentifier)
+        if AXUIElementCopyAttributeValue(appEl, kAXFocusedWindowAttribute as CFString, &win) == .success, let w = win {
+            let a = w as! AXUIElement
+            if let f = frameOf(a) { from = f }
+            _ = _AXUIElementGetWindow(a, &fromId)
+        }
+    }
+    let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+    var best: (id: CGWindowID, pid: pid_t, r: CGRect, score: CGFloat)? = nil
+    for w in info {
+        guard (w[kCGWindowLayer as String] as? Int) == 0,
+              let id = w[kCGWindowNumber as String] as? CGWindowID, id != fromId,
+              let pid = w[kCGWindowOwnerPID as String] as? pid_t,
+              NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular,
+              let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+              let x = b["X"], let y = b["Y"], let wd = b["Width"], let ht = b["Height"], wd > 80, ht > 80 else { continue }
+        let r = CGRect(x: x, y: y, width: wd, height: ht)
+        let dx = r.midX - from.midX, dy = r.midY - from.midY
+        // en la dirección pedida (centro más allá del centro actual) y puntaje: distancia en esa
+        // dirección + el doble del desvío lateral (prefiere la que está "enfrente")
+        let along: CGFloat, side: CGFloat
+        switch dir {
+        case "left":  along = -dx; side = abs(dy)
+        case "right": along = dx;  side = abs(dy)
+        case "up":    along = -dy; side = abs(dx)
+        default:      along = dy;  side = abs(dx)
+        }
+        guard along > 20 else { continue }
+        let score = along + 2 * side
+        if best == nil || score < best!.score { best = (id, pid, r, score) }
+    }
+    guard let t = best else { exit(0) }
+    // Un proceso de fondo no puede activar apps con NSRunningApplication.activate() (macOS lo
+    // ignora); por Accesibilidad sí: la app pasa al frente y luego se elige su ventana
+    let tApp = AXUIElementCreateApplication(t.pid)
+    AXUIElementSetAttributeValue(tApp, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+    var v: CFTypeRef?
+    if AXUIElementCopyAttributeValue(tApp, kAXWindowsAttribute as CFString, &v) == .success,
+       let wins = v as? [AXUIElement],
+       let a = wins.first(where: { var wid: CGWindowID = 0; return _AXUIElementGetWindow($0, &wid) == .success && wid == t.id }) {
+        AXUIElementPerformAction(a, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(a, kAXMainAttribute as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(a, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    }
+    CGWarpMouseCursorPosition(CGPoint(x: t.r.midX, y: t.r.midY))
+    CGAssociateMouseAndMouseCursorPosition(1)
+    exit(0)
+}
+
 if CommandLine.arguments.contains("max") {
     // App al frente → su ventana enfocada (o la principal)
     func fail(_ m: String) -> Never { FileHandle.standardError.write("win-grid max: \(m)\n".data(using: .utf8)!); exit(1) }
