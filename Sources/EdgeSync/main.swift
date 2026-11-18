@@ -221,6 +221,7 @@ func enforce(_ w: W, _ r: CGRect, _ tries: Int = 8) {
 @discardableResult
 func place(_ w: W, _ r: CGRect) -> CGRect {
     guard let a = axWindow(w) else { return w.r }
+    enforcing[w.id] = nil   // una orden nueva reemplaza cualquier reintento anterior de esta ventana
     ours[w.id] = Date()
     setFrame(a, r, thorough: true)
     func off(_ f: CGRect) -> Bool {
@@ -617,11 +618,21 @@ func checkDialogs(_ snap: [CGWindowID: W]) {
 }
 
 // Arrastre simulado (botón izquierdo) en ~0.6 s, para reproducir lo que hace el usuario
-func simulateDrag(_ from: CGPoint, _ to: CGPoint) {
-    log("cmd drag \(from) -> \(to)")
+func simulateDrag(_ from: CGPoint, _ to: CGPoint, alt: Bool = false) {
+    log("cmd drag \(from) -> \(to) alt=\(alt)")
     let src = CGEventSource(stateID: .hidSystemState)
-    func post(_ t: CGEventType, _ p: CGPoint) { CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap) }
+    func key(_ down: Bool) {
+        let e = CGEvent(keyboardEventSource: src, virtualKey: 58, keyDown: down)
+        e?.flags = down ? .maskAlternate : []
+        e?.post(tap: .cghidEventTap)
+    }
+    func post(_ t: CGEventType, _ p: CGPoint) {
+        let e = CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)
+        if alt { e?.flags = .maskAlternate }
+        e?.post(tap: .cghidEventTap)
+    }
     post(.mouseMoved, from); usleep(50_000)
+    if alt { key(true); usleep(30_000) }
     post(.leftMouseDown, from); usleep(80_000)
     let steps = 20
     var i = 1
@@ -630,7 +641,10 @@ func simulateDrag(_ from: CGPoint, _ to: CGPoint) {
         post(.leftMouseDragged, CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t))
         i += 1
         if i <= steps { DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { step() } }
-        else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { post(.leftMouseUp, to); log("cmd drag: soltado") } }
+        else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            post(.leftMouseUp, to); log("cmd drag: soltado")
+            if alt { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { key(false) } }
+        } }
     }
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { step() }
 }
@@ -643,6 +657,9 @@ func debugCommands() {
     try? FileManager.default.removeItem(atPath: "/tmp/edgesync.cmd")
     for line in txt.split(separator: "\n") {
         let f = line.split(separator: " ").map(String.init)
+        if f.count == 5, f[0] == "altdrag", let x1 = Double(f[1]), let y1 = Double(f[2]), let x2 = Double(f[3]), let y2 = Double(f[4]) {
+            simulateDrag(CGPoint(x: x1, y: y1), CGPoint(x: x2, y: y2), alt: true); continue
+        }
         if f.count == 5, f[0] == "drag", let x1 = Double(f[1]), let y1 = Double(f[2]), let x2 = Double(f[3]), let y2 = Double(f[4]) {
             simulateDrag(CGPoint(x: x1, y: y1), CGPoint(x: x2, y: y2)); continue
         }
