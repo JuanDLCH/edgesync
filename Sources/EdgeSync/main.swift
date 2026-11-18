@@ -715,6 +715,29 @@ func debugCommands() {
     }
 }
 
+// ---------- Ventanas nuevas: flotantes, en el monitor del mouse ----------
+// Los ids de ventana solo crecen: una ventana es nueva si su id es mayor que todos los vistos
+// (cambiar de escritorio muestra ventanas viejas, con ids menores, y no cuenta).
+var maxSeenId: CGWindowID = {
+    let l = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+    return l.compactMap { $0[kCGWindowNumber as String] as? CGWindowID }.max() ?? 0
+}()
+func handleNewWindows(_ snap: [CGWindowID: W]) {
+    let fresh = snap.values.filter { $0.id > maxSeenId }
+    if let m = snap.keys.max(), m > maxSeenId { maxSeenId = m }
+    for w in fresh where !isFloating(w) && !isDialog(w) {
+        let m = NSEvent.mouseLocation
+        guard let scr = NSScreen.screens.first(where: { NSMouseInRect(m, $0.frame, false) }) else { continue }
+        let v = work(usable(scr))
+        let size = CGSize(width: min(w.r.width, v.width), height: min(w.r.height, v.height))
+        let r = CGRect(x: v.midX - size.width / 2, y: v.midY - size.height / 2, width: size.width, height: size.height)
+        userFloating.insert(w.id); saveFloating()
+        let got = place(w, r)
+        if let a = axWindow(w) { AXUIElementPerformAction(a, kAXRaiseAction as CFString) }
+        log("nueva \(w.id): flotante en el monitor del mouse -> \(got)")
+    }
+}
+
 func watch() {
     debugCommands()
     syncAutoRaise()
@@ -722,6 +745,7 @@ func watch() {
     var snap = snapshot()
     defer { prev = snap }
     checkDialogs(snap)
+    handleNewWindows(snap)
     // Se cerró una ventana del mosaico: las que quedan en ese monitor se reorganizan
     var regridded = false
     for (id, w) in prev where snap[id] == nil && !windowExists(id) {

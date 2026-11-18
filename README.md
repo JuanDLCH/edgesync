@@ -12,6 +12,7 @@ SIP**. You place windows yourself; EdgeSync keeps them together:
   screen. Without ⌥ (or outside the zones) the window just moves and becomes floating.
 - **Make room**: windows covered by the dropped one shrink on the axis where they lose least;
   dropping onto an occupied cell splits it in two (the new window takes the half under the mouse).
+- **New windows** open floating, centred on the display under the mouse; you place them.
 - **Floating windows**: a window dropped outside the zones is remembered as floating; the tiled
   windows left behind are re-laid out. Closing a tiled window re-lays out its display too.
 - **Focus helpers** (with [AutoRaise](https://github.com/sbmpost/AutoRaise)): while a floating window
