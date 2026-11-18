@@ -38,9 +38,16 @@ func frameOf(_ a: AXUIElement) -> CGRect? {
     return CGRect(origin: p, size: s)
 }
 if CommandLine.arguments.contains("max") {
-    var app: CFTypeRef?, win: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(AXUIElementCreateSystemWide(), kAXFocusedApplicationAttribute as CFString, &app) == .success,
-          AXUIElementCopyAttributeValue(app as! AXUIElement, kAXFocusedWindowAttribute as CFString, &win) == .success else { exit(1) }
+    // App al frente → su ventana enfocada (o la principal)
+    func fail(_ m: String) -> Never { FileHandle.standardError.write("win-grid max: \(m)\n".data(using: .utf8)!); exit(1) }
+    guard let front = NSWorkspace.shared.frontmostApplication else { fail("sin app al frente") }
+    let appEl = AXUIElementCreateApplication(front.processIdentifier)
+    var win: CFTypeRef?
+    if AXUIElementCopyAttributeValue(appEl, kAXFocusedWindowAttribute as CFString, &win) != .success || win == nil {
+        guard AXUIElementCopyAttributeValue(appEl, kAXMainWindowAttribute as CFString, &win) == .success, win != nil else {
+            fail("\(front.localizedName ?? "?") no tiene ventana enfocada (¿permiso de Accesibilidad?)")
+        }
+    }
     let a = win as! AXUIElement
     var id: CGWindowID = 0
     guard _AXUIElementGetWindow(a, &id) == .success, let cur = frameOf(a) else { exit(1) }
