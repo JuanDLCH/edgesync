@@ -7,6 +7,9 @@
 import AppKit
 import ApplicationServices
 
+// Apagado desde el menú de EdgeSync (Screenshots)
+if FileManager.default.fileExists(atPath: NSHomeDirectory() + "/Library/Application Support/EdgeSync/off/screenshots") { exit(0) }
+
 // ---------- Foto de cada monitor (screencapture -x, un archivo por monitor) ----------
 let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("freeze-shot-\(getpid())")
 try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)

@@ -76,6 +76,9 @@ so helpers like `usable()`/margins are duplicated and must be kept in sync):
   sharing impossible → swap (or the displaced one floats where the dropped one came from); then
   `expandLone` (tiled windows grow into the largest free standard cell around them) and small-gap
   filling. `planAtMouse` only splits windows bigger than 0.7 × a quarter (max 2 per quarter).
+- **Menu bar** (`MenuController`, `featureOn`/`setFeature`): flag files in
+  `~/Library/Application Support/EdgeSync/off/{tiling,focus,screenshots}`; `tick()` only syncs AutoRaise
+  while tiling is off, `freeze-shot` checks `screenshots` at startup.
 - **`watch()`**: debug commands, AutoRaise sync (SIGSTOP/SIGCONT AutoRaise while a user-floating window
   or a dialog is focused; flag file `/tmp/edgesync-autoraise-paused`), new dialogs/system prompts get
   focus + mouse (`checkDialogs`), new windows (id > `maxSeenId`) become floating centred on the mouse's

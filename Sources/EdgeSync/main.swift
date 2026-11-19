@@ -607,6 +607,7 @@ func focusedWindow() -> (id: CGWindowID, dialog: Bool)? {
     return (id, dialog)
 }
 func syncAutoRaise() {
+    guard featureOn(.focus) else { return }   // Autofocus apagado: AutoRaise queda detenido
     let want = focusedWindow().map { userFloating.contains($0.id) || $0.dialog } ?? autoRaisePaused
     if want != autoRaisePaused {
         signalAutoRaise(want ? "-STOP" : "-CONT")
@@ -1105,6 +1106,12 @@ func hidePreview() {
 }
 
 func tick() {
+    if !featureOn(.tiling) {   // Autotiling apagado desde la barra de menú: solo AutoRaise
+        if dragging { dragging = false; target = nil; moving = false; hidePreview() }
+        pollCount += 1
+        if pollCount % 6 == 0 { syncAutoRaise() }
+        return
+    }
     let down = CGEventSource.buttonState(.combinedSessionState, button: .left)
     if down && !dragging {
         dragging = true; baseline = snapshot(); target = nil; lastApplied = nil; axCache = [:]; dividers = [:]
@@ -1236,6 +1243,58 @@ func tick() {
     }
 }
 
+
+// ---------- Barra de menú: encender/apagar cada función ----------
+// Un archivo por función apagada en ~/Library/Application Support/EdgeSync/off/ (así freeze-shot y
+// los scripts de skhd también lo ven)
+enum Feature: String, CaseIterable { case tiling, focus, screenshots
+    var title: String { switch self { case .tiling: return "Autotiling"; case .focus: return "Autofocus"; case .screenshots: return "Screenshots" } }
+}
+let offDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/EdgeSync/off")
+func featureOn(_ f: Feature) -> Bool { !FileManager.default.fileExists(atPath: offDir.appendingPathComponent(f.rawValue).path) }
+func setFeature(_ f: Feature, _ on: Bool) {
+    let path = offDir.appendingPathComponent(f.rawValue)
+    if on { try? FileManager.default.removeItem(at: path) }
+    else { try? FileManager.default.createDirectory(at: offDir, withIntermediateDirectories: true); FileManager.default.createFile(atPath: path.path, contents: nil) }
+    if f == .focus { applyFocusSetting() }
+    if f == .tiling && on { prev = snapshot() }
+    log("\(f.title) \(on ? "encendido" : "apagado")")
+}
+// Autofocus apagado = AutoRaise detenido (SIGSTOP); la marca de pausa evita que screenshot-area.sh
+// lo reanude
+func applyFocusSetting() {
+    if featureOn(.focus) {
+        signalAutoRaise("-CONT"); autoRaisePaused = false
+        try? FileManager.default.removeItem(atPath: "/tmp/edgesync-autoraise-paused")
+        syncAutoRaise()
+    } else {
+        signalAutoRaise("-STOP"); autoRaisePaused = true
+        FileManager.default.createFile(atPath: "/tmp/edgesync-autoraise-paused", contents: nil)
+    }
+}
+final class MenuController: NSObject, NSMenuDelegate {
+    let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    let menu = NSMenu()
+    override init() {
+        super.init()
+        item.button?.image = NSImage(systemSymbolName: "rectangle.split.2x2", accessibilityDescription: "EdgeSync")
+        menu.delegate = self
+        for f in Feature.allCases {
+            let mi = NSMenuItem(title: f.title, action: #selector(toggle(_:)), keyEquivalent: "")
+            mi.target = self; mi.representedObject = f.rawValue
+            menu.addItem(mi)
+        }
+        item.menu = menu
+    }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        for mi in menu.items { if let r = mi.representedObject as? String, let f = Feature(rawValue: r) { mi.state = featureOn(f) ? .on : .off } }
+    }
+    @objc func toggle(_ sender: NSMenuItem) {
+        guard let r = sender.representedObject as? String, let f = Feature(rawValue: r) else { return }
+        setFeature(f, !featureOn(f))
+    }
+}
+
 // Pedir el permiso: macOS agrega EdgeSync a Accesibilidad con su firma actual (tras recompilar,
 // quitar la entrada vieja con − y reiniciar el servicio).
 let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -1249,7 +1308,9 @@ NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTermin
     }
 }
 signalAutoRaise("-CONT")   // por si EdgeSync se cerró con AutoRaise en pausa
+applyFocusSetting()
 Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { _ in tick() }
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)   // sin ícono en el Dock ni menú
+let menuController = MenuController()
 app.run()

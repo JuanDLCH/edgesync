@@ -6,6 +6,10 @@ SIP**. You place windows yourself; EdgeSync keeps them together:
 - **Shared edges**: drag the edge between two windows and every window on that divider follows
   (the ones aligned in the same column/row and the ones on the other side). Windows with a minimum
   size stop the divider instead of being overlapped.
+- **Menu bar toggles**: the EdgeSync icon (2×2 grid) turns each feature on/off: **Autotiling**
+  (everything about tiling/snapping), **Autofocus** (AutoRaise is stopped while off) and
+  **Screenshots** (`freeze-shot` exits right away). State: one file per disabled feature in
+  `~/Library/Application Support/EdgeSync/off/`, so it survives restarts.
 - **Snap with ⌥**: drag a window holding ⌥ and a translucent preview shows where it will land; drop
   with ⌥ held to snap. Over a tiled window: its middle 40 % = take its whole place (it moves to the
   one you left), its outer 30 % on either side (long axis) = split it and take that half. Over empty
