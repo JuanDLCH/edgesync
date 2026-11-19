@@ -403,43 +403,36 @@ func regrid(_ vis: CGRect) {
     }
 }
 
-// Hueco que deja una ventana al irse: lo llenan las vecinas de UN lado que lo cubren justo
-// (en dwindle, la "hermana"). Se prefiere el lado con una sola vecina.
-func fillHole(_ old: CGRect, _ others: [W], _ vis: CGRect) {
-    var options: [(Edge, [W])] = []
-    for e in Edge.allCases {
-        // vecinas al otro lado del borde `e` del hueco
-        let side = others.filter { o in
-            let g: CGFloat
-            switch e {
-            case .left:   g = old.minX - o.r.maxX
-            case .right:  g = o.r.minX - old.maxX
-            case .top:    g = old.minY - o.r.maxY
-            case .bottom: g = o.r.minY - old.maxY
-            }
-            return g >= -tol && g <= maxGap && along(old, o.r, e) > 40
+// Tras encajar/mover: una ventana encajada que quedó con espacio libre al lado (p. ej. la otra
+// mitad de su cuarto se fue, o la de debajo) crece a la celda normal más grande que la contiene
+// (cuarto, mitad o pantalla) sin pisar a ninguna otra. Así la que queda a medias recupera el
+// ancho, y la de arriba se estira hacia abajo.
+func standardCells(_ vis: CGRect) -> [CGRect] {
+    let v = work(vis), hw = (v.width - gap) / 2, hh = (v.height - gap) / 2
+    return [v,
+            CGRect(x: v.minX, y: v.minY, width: hw, height: v.height), CGRect(x: v.minX + hw + gap, y: v.minY, width: hw, height: v.height),
+            CGRect(x: v.minX, y: v.minY, width: v.width, height: hh), CGRect(x: v.minX, y: v.minY + hh + gap, width: v.width, height: hh),
+            CGRect(x: v.minX, y: v.minY, width: hw, height: hh), CGRect(x: v.minX + hw + gap, y: v.minY, width: hw, height: hh),
+            CGRect(x: v.minX, y: v.minY + hh + gap, width: hw, height: hh), CGRect(x: v.minX + hw + gap, y: v.minY + hh + gap, width: hw, height: hh)]
+}
+func expandLone(_ vis: CGRect) {
+    let cells = standardCells(vis)
+    var wins = snapshot().values.filter { vis.contains(CGPoint(x: $0.r.midX, y: $0.r.midY)) && !isFloating($0) && !userFloating.contains($0.id) }
+    var changed = true, rounds = 0
+    while changed && rounds < 4 {
+        changed = false; rounds += 1
+        for i in wins.indices {
+            let w = wins[i]
+            let rest = wins.filter { $0.id != w.id }.map { $0.r }
+            let fitsIn = cells.filter { c in c.insetBy(dx: -14, dy: -14).contains(w.r) &&
+                                             (c.width > w.r.width + 14 || c.height > w.r.height + 14) &&
+                                             !rest.contains { intersects(c, $0) } }
+            guard let c = fitsIn.max(by: { $0.width * $0.height < $1.width * $1.height }) else { continue }
+            let got = place(w, c)
+            log("  crece \(w.id) a la celda libre -> \(got)")
+            wins[i] = W(id: w.id, pid: w.pid, r: got)
+            changed = true
         }
-        guard !side.isEmpty else { continue }
-        // deben quedar dentro del tramo del hueco y cubrirlo de punta a punta
-        let lo = vertical(e) ? old.minY : old.minX, hi = vertical(e) ? old.maxY : old.maxX
-        let los = side.map { vertical(e) ? $0.r.minY : $0.r.minX }, his = side.map { vertical(e) ? $0.r.maxY : $0.r.maxX }
-        guard los.allSatisfy({ $0 >= lo - align }), his.allSatisfy({ $0 <= hi + align }),
-              abs(los.min()! - lo) <= align, abs(his.max()! - hi) <= align else { continue }
-        options.append((e, side))
-    }
-    guard let pick = options.min(by: { $0.1.count < $1.1.count }) else { log("  hueco sin vecinas que lo cubran"); return }
-    let e = pick.0
-    for o in pick.1 {
-        // la vecina estira el borde que da al hueco hasta el lado opuesto del hueco
-        let target: CGRect
-        switch e {
-        case .left:   target = with(o.r, .right, old.maxX)
-        case .right:  target = with(o.r, .left, old.minX)
-        case .top:    target = with(o.r, .bottom, old.maxY)
-        case .bottom: target = with(o.r, .top, old.minY)
-        }
-        let got = place(o, target)
-        log("  llena hueco \(o.id) desde \(e) -> \(got)")
     }
 }
 
@@ -475,7 +468,6 @@ func settle(_ id: CGWindowID, old: CGRect? = nil, snapped: Bool = false) {
 
     // 1. Choques: la de debajo cede por el eje donde pierde menos; si no puede, cede la puesta
     var placed: [CGWindowID: CGRect] = [:]
-    var swapped = false
     for o in others where intersects(T, o.r) {
         var cands: [(CGRect, Edge)] = []
         if o.r.midX < T.midX { cands.append((with(o.r, .right, T.minX - gap), .right)) }
@@ -529,7 +521,7 @@ func settle(_ id: CGWindowID, old: CGRect? = nil, snapped: Bool = false) {
                 T = before
                 if moved, !wasFloating, let old = old, vis.contains(CGPoint(x: old.midX, y: old.midY)) {
                     T = o.r
-                    let g2 = place(o, old); placed[o.id] = g2; swapped = true
+                    let g2 = place(o, old); placed[o.id] = g2
                     log("  no caben juntas: intercambio con \(o.id) -> puesta \(T), otra -> \(g2)")
                 } else {
                     // La puesta venía flotando: la desplazada pasa a flotar donde estaba la puesta
@@ -541,7 +533,7 @@ func settle(_ id: CGWindowID, old: CGRect? = nil, snapped: Bool = false) {
                         r.origin.x = min(max(r.minX, ov.minX), ov.maxX - r.width)
                         r.origin.y = min(max(r.minY, ov.minY), ov.maxY - r.height)
                     }
-                    let g2 = place(o, r); placed[o.id] = g2; swapped = true
+                    let g2 = place(o, r); placed[o.id] = g2
                     userFloating.insert(o.id); saveFloating()
                     if let a = axWindow(o) { AXUIElementPerformAction(a, kAXRaiseAction as CFString) }
                     log("  no caben juntas: \(o.id) pasa a flotar donde estaba la puesta -> \(g2)")
@@ -552,13 +544,9 @@ func settle(_ id: CGWindowID, old: CGRect? = nil, snapped: Bool = false) {
         }
     }
 
-    // Se movió de un sitio encajado a otro: las vecinas ocupan el hueco que dejó (si no hubo
-    // intercambio, que ya lo ocupó la otra)
-    // (solo si no la encajó el usuario con ⌥: al elegir una celda a propósito, nada más se estira)
-    if moved, !wasFloating, !swapped, !snapped, let old = old, let ovis = visibleRect(at: CGPoint(x: old.midX, y: old.midY)) {
-        let there = snapshot().values.filter { $0.id != id && ovis.contains(CGPoint(x: $0.r.midX, y: $0.r.midY)) && !isFloating($0) && !userFloating.contains($0.id) }
-        log("hueco \(old)")
-        fillHole(old, there, ovis)
+    // Se movió de un sitio encajado a otro: lo que quedó con espacio libre crece (ver expandLone)
+    if moved, !wasFloating, let old = old, let ovis = visibleRect(at: CGPoint(x: old.midX, y: old.midY)) {
+        expandLone(ovis)
     }
 
     // 2. Huecos pequeños: estirar la puesta hasta la vecina o el borde de la pantalla
@@ -1050,9 +1038,12 @@ func planAtMouse(moving: W, among: [W]) -> DropPlan? {
     }
     let r = o.r
     var p: DropPlan
+    // máximo 2 por cuarto: si la de abajo ya es media celda (o menos), solo se puede reemplazar
+    let qArea: CGFloat = visibleRect(at: CGPoint(x: r.midX, y: r.midY)).map { let v = work($0); return (v.width - gap) / 2 * (v.height - gap) / 2 } ?? 0
+    let canSplit = r.width * r.height > 0.7 * qArea
     let horizontal = r.width >= r.height
     let f = horizontal ? (mp.x - r.minX) / r.width : (mp.y - r.minY) / r.height
-    if f > 0.3 && f < 0.7 {
+    if !canSplit || (f > 0.3 && f < 0.7) {
         p = DropPlan(rect: r, occupant: o, replace: true, otherHalf: nil)
     } else {
         var a: CGRect, b: CGRect

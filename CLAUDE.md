@@ -74,7 +74,8 @@ so helpers like `usable()`/margins are duplicated and must be kept in sync):
   and touching < 2 edges → user-floating (`/tmp/edgesync-floating`) + `regrid` of the display it left.
   Otherwise overlapped windows cede on the cheaper axis; same cell → split; if minimum sizes make
   sharing impossible → swap (or the displaced one floats where the dropped one came from); then
-  `fillHole` for the vacated cell and small-gap filling.
+  `expandLone` (tiled windows grow into the largest free standard cell around them) and small-gap
+  filling. `planAtMouse` only splits windows bigger than 0.7 × a quarter (max 2 per quarter).
 - **`watch()`**: debug commands, AutoRaise sync (SIGSTOP/SIGCONT AutoRaise while a user-floating window
   or a dialog is focused; flag file `/tmp/edgesync-autoraise-paused`), new dialogs/system prompts get
   focus + mouse (`checkDialogs`), new windows (id > `maxSeenId`) become floating centred on the mouse's
