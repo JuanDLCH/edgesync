@@ -1031,6 +1031,52 @@ func feasiblePlan(_ cell: CGRect, moving: W, among: [W]) -> DropPlan {
     return p
 }
 
+// Con ⌥ sobre una ventana del mosaico: ella es el objetivo. Centro (40 %) = ocuparla entera;
+// extremos (30 % a cada lado, en su sentido largo) = partirla y tomar esa mitad. Sin ventana debajo,
+// las zonas de la pantalla de siempre.
+func planAtMouse(moving: W, among: [W]) -> DropPlan? {
+    let mainH = NSScreen.screens[0].frame.height
+    let m = NSEvent.mouseLocation, mp = CGPoint(x: m.x, y: mainH - m.y)
+    // la ventana de abajo: la de más adelante (orden de CGWindowList) que contiene el mouse
+    let order = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? [])
+        .compactMap { $0[kCGWindowNumber as String] as? CGWindowID }
+    let byId = Dictionary(uniqueKeysWithValues: among.map { ($0.id, $0) })
+    let under = order.lazy.compactMap { byId[$0] }.first { o in
+        o.id != moving.id && !isFloating(o) && !userFloating.contains(o.id) && o.r.contains(mp)
+    }
+    guard let o = under else {
+        guard let c = cellAtMouse() else { return nil }
+        return feasiblePlan(c, moving: moving, among: among)
+    }
+    let r = o.r
+    var p: DropPlan
+    let horizontal = r.width >= r.height
+    let f = horizontal ? (mp.x - r.minX) / r.width : (mp.y - r.minY) / r.height
+    if f > 0.3 && f < 0.7 {
+        p = DropPlan(rect: r, occupant: o, replace: true, otherHalf: nil)
+    } else {
+        var a: CGRect, b: CGRect
+        if horizontal {
+            let w = (r.width - gap) / 2
+            a = CGRect(x: r.minX, y: r.minY, width: w, height: r.height)
+            b = CGRect(x: r.minX + w + gap, y: r.minY, width: w, height: r.height)
+        } else {
+            let h = (r.height - gap) / 2
+            a = CGRect(x: r.minX, y: r.minY, width: r.width, height: h)
+            b = CGRect(x: r.minX, y: r.minY + h + gap, width: r.width, height: h)
+        }
+        if f >= 0.7 { swap(&a, &b) }
+        p = DropPlan(rect: a, occupant: o, replace: false, otherHalf: b)
+    }
+    // ¿cabe? (mínimos aprendidos)
+    if p.replace {
+        p.ok = fits(moving, r) && (userFloating.contains(moving.id) || fits(o, vacated(moving.r)))
+    } else {
+        p.ok = fits(moving, p.rect) && fits(o, p.otherHalf!)
+    }
+    return p
+}
+
 var previewWin: NSWindow? = nil
 var previewShown: CGRect? = nil
 var lastAlt = false
@@ -1089,8 +1135,8 @@ func tick() {
         // ¿Se movió una ventana y se soltó con el mouse en un borde? → encajarla (reemplaza al
         // mosaico nativo, que está apagado: macOS deshacía lo que EdgeSync acomodaba)
         // Encajar solo con ⌥ (se ve la vista previa); sin ⌥ la ventana se mueve libre (flotante)
-        if target == nil, altAtRelease, let (w, cell) = snapTarget() {
-            let plan = feasiblePlan(cell, moving: w, among: Array(snapshot().values))
+        if target == nil, altAtRelease, let w = movedWindow(), !isFloating(w),
+           let plan = planAtMouse(moving: w, among: Array(snapshot().values)) {
             if !plan.ok {   // recuadro rojo: no cabe en ningún lado ahí → vuelve a donde estaba
                 let back = place(w, w.r)
                 log("encajar \(w.id): no cabe (mínimos), vuelve a \(back)")
@@ -1106,7 +1152,7 @@ func tick() {
                     // donde estaba, visible
                     let src = vacated(w.r)
                     let fromTile = !userFloating.contains(w.id) && fits(o, src) &&
-                        (visibleRect(at: CGPoint(x: src.midX, y: src.midY)).map { looksTiled(src, $0, baseline.values.filter { $0.id != w.id && $0.id != o.id }.map { $0.r }) } ?? false)
+                        (visibleRect(at: CGPoint(x: src.midX, y: src.midY)).map { looksTiled(src, $0, baseline.values.filter { $0.id != w.id }.map { $0.r }) } ?? false)
                     var dest = CGRect(origin: src.origin, size: fromTile ? src.size : o.r.size)
                     if !fromTile, let ov = visibleRect(at: CGPoint(x: src.midX, y: src.midY)).map(work) {   // dentro de la pantalla
                         dest.origin.x = min(max(dest.minX, ov.minX), ov.maxX - dest.width)
@@ -1127,7 +1173,7 @@ func tick() {
                         let full = cell.union(other)
                         let src = w.r
                         let fromTile = !userFloating.contains(w.id) &&
-                            (visibleRect(at: CGPoint(x: src.midX, y: src.midY)).map { looksTiled(src, $0, baseline.values.filter { $0.id != w.id && $0.id != o.id }.map { $0.r }) } ?? false)
+                            (visibleRect(at: CGPoint(x: src.midX, y: src.midY)).map { looksTiled(src, $0, baseline.values.filter { $0.id != w.id }.map { $0.r }) } ?? false)
                         let g3 = place(o, CGRect(origin: src.origin, size: fromTile ? src.size : o.r.size))
                         if !fromTile { userFloating.insert(o.id); saveFloating() }
                         log("  no caben en media celda (mínimos): reemplazo, \(o.id) -> \(g3)")
@@ -1172,8 +1218,7 @@ func tick() {
     // (solo si de verdad se está moviendo una ventana: ⌥ + arrastrar texto no muestra nada)
     let altNow = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate)
     if altNow != lastAlt { log("⌥ \(altNow ? "presionada" : "suelta") durante el arrastre"); lastAlt = altNow }
-    if altNow, let c = cellAtMouse(), let mw = movedWindow(), !isFloating(mw) {
-        let p = feasiblePlan(c, moving: mw, among: Array(baseline.values))
+    if altNow, let mw = movedWindow(), !isFloating(mw), let p = planAtMouse(moving: mw, among: Array(baseline.values)) {
         showPreview(p.rect, bad: !p.ok)
     }
     else { hidePreview() }

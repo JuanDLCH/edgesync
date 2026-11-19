@@ -7,7 +7,9 @@ SIP**. You place windows yourself; EdgeSync keeps them together:
   (the ones aligned in the same column/row and the ones on the other side). Windows with a minimum
   size stop the divider instead of being overlapped.
 - **Snap with ⌥**: drag a window holding ⌥ and a translucent preview shows where it will land; drop
-  with ⌥ held to snap. Zones by mouse position: left/right quarter of the screen → top third =
+  with ⌥ held to snap. Over a tiled window: its middle 40 % = take its whole place (it moves to the
+  one you left), its outer 30 % on either side (long axis) = split it and take that half. Over empty
+  space, zones by mouse position: left/right quarter of the screen → top third =
   quarter, middle = full-height column, bottom third = quarter; centre touching the top = full
   screen. Without ⌥ (or outside the zones) the window just moves and becomes floating.
 - **Make room**: windows covered by the dropped one shrink on the axis where they lose least.
