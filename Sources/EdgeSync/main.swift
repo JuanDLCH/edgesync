@@ -880,6 +880,28 @@ func cellAtMouse() -> CGRect? {
 }
 
 // ---------- Vista previa del encaje (mientras se arrastra con ⌥) ----------
+// Lo que de verdad va a pasar: si la celda ya la ocupa otra ventana del mosaico, se parte en dos
+// por el lado largo y la nueva queda en la mitad del mouse (igual que settle()).
+func previewFor(_ cell: CGRect, moving: CGWindowID) -> CGRect {
+    let occupant = baseline.values.first { o in
+        guard o.id != moving, !isFloating(o), !userFloating.contains(o.id) else { return false }
+        let i = o.r.intersection(cell)
+        return !i.isNull && i.width * i.height > 0.5 * cell.width * cell.height
+    }
+    guard let o = occupant else { return cell }
+    let u = cell.union(o.r)
+    let mainH = NSScreen.screens[0].frame.height
+    let m = NSEvent.mouseLocation, mp = CGPoint(x: m.x, y: mainH - m.y)
+    if u.width >= u.height {
+        let w = (u.width - gap) / 2
+        return mp.x > u.midX ? CGRect(x: u.minX + w + gap, y: u.minY, width: w, height: u.height)
+                             : CGRect(x: u.minX, y: u.minY, width: w, height: u.height)
+    } else {
+        let h = (u.height - gap) / 2
+        return mp.y > u.midY ? CGRect(x: u.minX, y: u.minY + h + gap, width: u.width, height: h)
+                             : CGRect(x: u.minX, y: u.minY, width: u.width, height: h)
+    }
+}
 var previewWin: NSWindow? = nil
 var previewShown: CGRect? = nil
 var lastAlt = false
@@ -965,7 +987,7 @@ func tick() {
     // (solo si de verdad se está moviendo una ventana: ⌥ + arrastrar texto no muestra nada)
     let altNow = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate)
     if altNow != lastAlt { log("⌥ \(altNow ? "presionada" : "suelta") durante el arrastre"); lastAlt = altNow }
-    if altNow, let c = cellAtMouse(), let mw = movedWindow(), !isFloating(mw) { showPreview(c) }
+    if altNow, let c = cellAtMouse(), let mw = movedWindow(), !isFloating(mw) { showPreview(previewFor(c, moving: mw.id)) }
     else { hidePreview() }
     if moving { return }
     let cur = snapshot()
