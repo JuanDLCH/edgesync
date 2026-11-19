@@ -58,7 +58,9 @@ Then allow **EdgeSync** in System Settings → Privacy & Security → Accessibil
 start) and restart it: `launchctl kickstart -k gui/$(id -u)/local.edgesync`.
 
 `send-key <mods> <key>` posts a key combination instantly (e.g. `send-key ctrl right` to switch
-Spaces from a mouse button), much faster than `osascript` + System Events.
+Spaces from a mouse button), much faster than `osascript` + System Events. `send-key swipe
+left|right [speed]` simulates a fast trackpad swipe (private dock-swipe gesture event, as Mac Mouse
+Fix does): the native Space animation, but as short as a quick swipe instead of Ctrl+←/→'s slow one.
 
 `win-grid focus left|right|up|down` focuses the nearest window in that direction across all
 displays and moves the mouse to its centre (so focus-follows-mouse doesn't take it back).
