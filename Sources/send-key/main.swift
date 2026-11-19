@@ -13,7 +13,7 @@ let args = CommandLine.arguments
 // animación lenta fija de Ctrl+←/→. API no documentada: puede romperse con una actualización.
 if args.count >= 3, args[1] == "swipe" {
     let right = args[2] == "right"
-    let speed = args.count >= 4 ? (Double(args[3]) ?? 3) : 3
+    let speed = args.count >= 4 ? (Double(args[3]) ?? 5.25) : 5.25
     func post(phase: Int64, progress: Double, velocity: Double) {
         guard let e30 = CGEvent(source: nil), let e29 = CGEvent(source: nil) else { return }
         e30.setIntegerValueField(CGEventField(rawValue: 55)!, value: 30)       // kCGSEventDockControl
