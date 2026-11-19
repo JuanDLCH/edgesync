@@ -498,7 +498,8 @@ func settle(_ id: CGWindowID, old: CGRect? = nil, snapped: Bool = false) {
 
     // Se movió de un sitio encajado a otro: las vecinas ocupan el hueco que dejó (si no hubo
     // intercambio, que ya lo ocupó la otra)
-    if moved, !wasFloating, !swapped, let old = old, let ovis = visibleRect(at: CGPoint(x: old.midX, y: old.midY)) {
+    // (solo si no la encajó el usuario con ⌥: al elegir una celda a propósito, nada más se estira)
+    if moved, !wasFloating, !swapped, !snapped, let old = old, let ovis = visibleRect(at: CGPoint(x: old.midX, y: old.midY)) {
         let there = snapshot().values.filter { $0.id != id && ovis.contains(CGPoint(x: $0.r.midX, y: $0.r.midY)) && !isFloating($0) && !userFloating.contains($0.id) }
         log("hueco \(old)")
         fillHole(old, there, ovis)
@@ -753,8 +754,12 @@ func watch() {
     for (id, w) in prev where snap[id] == nil && !windowExists(id) {
         let wasFloating = userFloating.remove(id) != nil
         if wasFloating { saveFloating() }
-        if wasFloating || isFloating(w) || regridded { continue }
-        if let vis = visibleRect(at: CGPoint(x: w.r.midX, y: w.r.midY)) {
+        if isFloating(w) || regridded { continue }
+        guard let vis = visibleRect(at: CGPoint(x: w.r.midX, y: w.r.midY)) else { continue }
+        // Cuenta como del mosaico si no estaba marcada flotante, o si de hecho estaba encajada
+        // (p. ej. una ventana nueva que se acomodó con ⌥G sin pasar por EdgeSync)
+        if wasFloating && !looksTiled(w.r, vis, prev.values.filter { $0.id != id }.map { $0.r }) { continue }
+        do {
             log("cerrada \(id) \(w.r): reorganizar")
             axCache = [:]
             regrid(vis); regridded = true
