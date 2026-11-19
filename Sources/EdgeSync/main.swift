@@ -1015,6 +1015,8 @@ func feasiblePlan(_ cell: CGRect, moving: W, among: [W]) -> DropPlan {
             p = DropPlan(rect: cell.union(o.r), occupant: o, replace: true, otherHalf: nil)
         }
         p.ok = fits(moving, p.rect) || canPlace(moving, p.rect, among: among, except: [o.id])
+        // reemplazo desde una celda del mosaico: la desplazada va a esa celda y tiene que caber
+        if p.ok && p.replace && !userFloating.contains(moving.id) && !fits(o, moving.r) { p.ok = false }
     } else {
         p.ok = canPlace(moving, p.rect, among: among, except: [])
     }
