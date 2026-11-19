@@ -888,14 +888,22 @@ func resolveAfterResize(_ t: W) {
 // aún no se conocían), se deshace todo: cada ventana que cambió vuelve a como estaba.
 func verifySnap(_ id: CGWindowID, before: [CGWindowID: W], floatingBefore: Set<CGWindowID>) {
     let now = snapshot()
-    guard let t = now[id], let vis = visibleRect(at: CGPoint(x: t.r.midX, y: t.r.midY)) else { return }
-    let area = work(vis)
-    let outside = t.r.minX < area.minX - 8 || t.r.maxX > area.maxX + 8 || t.r.minY < area.minY - 8 || t.r.maxY > area.maxY + 8
-    let others = now.values.filter { $0.id != id && !isFloating($0) && !userFloating.contains($0.id) &&
-                                     vis.contains(CGPoint(x: $0.r.midX, y: $0.r.midY)) }
-    let clash = others.first { intersects(t.r, $0.r) }
-    guard outside || clash != nil else { return }
-    log("encaje \(id) no quedó bien (\(outside ? "fuera de la pantalla" : "encima de \(clash!.id)")): se deshace")
+    // todas las que se movieron en la operación (la arrastrada y las desplazadas/achicadas)
+    let changed = now.values.filter { w in w.id == id || (before[w.id].map { $0.r != w.r } ?? false) }
+    var problem: String? = nil
+    for t in changed {
+        guard let vis = visibleRect(at: CGPoint(x: t.r.midX, y: t.r.midY)) else { continue }
+        let area = work(vis)
+        if t.r.minX < area.minX - 8 || t.r.maxX > area.maxX + 8 || t.r.minY < area.minY - 8 || t.r.maxY > area.maxY + 8 {
+            problem = "\(t.id) fuera de la pantalla"; break
+        }
+        if userFloating.contains(t.id) { continue }   // una flotante puede estar encima
+        let others = now.values.filter { $0.id != t.id && !isFloating($0) && !userFloating.contains($0.id) &&
+                                         vis.contains(CGPoint(x: $0.r.midX, y: $0.r.midY)) }
+        if let c = others.first(where: { intersects(t.r, $0.r) }) { problem = "\(t.id) encima de \(c.id)"; break }
+    }
+    guard let why = problem else { return }
+    log("encaje \(id) no quedó bien (\(why)): se deshace")
     axCache = [:]
     for (wid, cur) in now {
         guard let orig = before[wid], cur.r != orig.r, !isFloating(cur) else { continue }
@@ -1087,9 +1095,14 @@ func tick() {
                     // la desplazada va a donde estaba la arrastrada si venía del mosaico; si no, flota
                     // donde estaba, visible
                     let src = w.r
-                    let fromTile = !userFloating.contains(w.id) &&
+                    let fromTile = !userFloating.contains(w.id) && fits(o, src) &&
                         (visibleRect(at: CGPoint(x: src.midX, y: src.midY)).map { looksTiled(src, $0, baseline.values.filter { $0.id != w.id && $0.id != o.id }.map { $0.r }) } ?? false)
-                    let g2 = place(o, CGRect(origin: src.origin, size: fromTile ? src.size : o.r.size))
+                    var dest = CGRect(origin: src.origin, size: fromTile ? src.size : o.r.size)
+                    if !fromTile, let ov = visibleRect(at: CGPoint(x: src.midX, y: src.midY)).map(work) {   // dentro de la pantalla
+                        dest.origin.x = min(max(dest.minX, ov.minX), ov.maxX - dest.width)
+                        dest.origin.y = min(max(dest.minY, ov.minY), ov.maxY - dest.height)
+                    }
+                    let g2 = place(o, dest)
                     if !fromTile { userFloating.insert(o.id); saveFloating() }
                     if let a = axWindow(o) { AXUIElementPerformAction(a, kAXRaiseAction as CFString) }
                     log("  reemplazada \(o.id) -> \(g2)\(fromTile ? "" : " (flotante)")")
