@@ -884,6 +884,28 @@ func resolveAfterResize(_ t: W) {
     if T != orig { let got = place(t, T); log("  tope por tamaño mínimo: \(t.id) -> \(got)") }
 }
 
+// Tras encajar: si la ventana quedó encima de otra del mosaico o fuera de la pantalla (mínimos que
+// aún no se conocían), se deshace todo: cada ventana que cambió vuelve a como estaba.
+func verifySnap(_ id: CGWindowID, before: [CGWindowID: W]) {
+    let now = snapshot()
+    guard let t = now[id], let vis = visibleRect(at: CGPoint(x: t.r.midX, y: t.r.midY)) else { return }
+    let area = work(vis)
+    let outside = t.r.minX < area.minX - 8 || t.r.maxX > area.maxX + 8 || t.r.minY < area.minY - 8 || t.r.maxY > area.maxY + 8
+    let others = now.values.filter { $0.id != id && !isFloating($0) && !userFloating.contains($0.id) &&
+                                     vis.contains(CGPoint(x: $0.r.midX, y: $0.r.midY)) }
+    let clash = others.first { intersects(t.r, $0.r) }
+    guard outside || clash != nil else { return }
+    log("encaje \(id) no quedó bien (\(outside ? "fuera de la pantalla" : "encima de \(clash!.id)")): se deshace")
+    axCache = [:]
+    for (wid, cur) in now {
+        guard let orig = before[wid], cur.r != orig.r, !isFloating(cur) else { continue }
+        if wid != id && userFloating.contains(wid) && before[wid] == nil { continue }
+        place(cur, orig.r)
+    }
+    // la arrastrada vuelve a su estado anterior (flotante si lo era)
+    prev = snapshot()
+}
+
 // Encaje al soltar: la ventana que el usuario movió (la de la app activa cuya posición cambió) y
 // la celda según la zona de la pantalla donde se suelta el mouse (ver abajo).
 let edgeZone: CGFloat = 12       // px desde el borde de la pantalla
@@ -1103,7 +1125,12 @@ func tick() {
             log("  encajada -> \(got)")
             let old = w.r, id = w.id
             dragging = false; target = nil; moving = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { settle(id, old: old, snapped: true); prev = snapshot() }
+            let before = prev   // cómo estaba todo antes del arrastre
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                settle(id, old: old, snapped: true); prev = snapshot()
+                // ¿quedó bien? (dar tiempo a los reintentos de apps lentas) Si no, deshacer todo
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { verifySnap(id, before: before) }
+            }
             prev = baseline
             return
         }
