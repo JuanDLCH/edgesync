@@ -14,7 +14,10 @@ SIP**. You place windows yourself; EdgeSync keeps them together:
   Dropping onto an occupied cell: with the mouse at the screen corner/edge (last 70 px) the window
   **replaces** it (the old one goes where the dragged one came from, or floats); elsewhere the cell is
   **split** and the new window takes the half under the mouse (falls back to replacing if minimum
-  sizes don't fit). The preview shows which.
+  sizes don't fit). The preview shows which, and turns **red** when the window can't fit there at
+  all (not even shrinking its column/row neighbours to their minimums); dropping on red puts it back.
+  Minimum sizes are learned per app the first time one refuses a size
+  (`~/Library/Application Support/EdgeSync/min-sizes.json`).
 - **New windows** open floating, centred on the display under the mouse; you place them.
 - **Floating windows**: a window dropped outside the zones is remembered as floating; the tiled
   windows left behind are re-laid out. Closing a tiled window re-lays out its display too.

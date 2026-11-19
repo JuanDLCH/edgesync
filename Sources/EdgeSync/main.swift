@@ -239,8 +239,64 @@ func place(_ w: W, _ r: CGRect) -> CGRect {
         got = real()
     }
     if off(got) { enforce(w, r) }
+    learnMin(w, requested: r, got: got)
     return got
 }
+
+// ---------- Tamaños mínimos aprendidos por app ----------
+// macOS no expone el tamaño mínimo de una ventana; se aprende cuando una app se queda más grande
+// de lo pedido. Se guarda por bundle id en ~/Library/Application Support/EdgeSync/min-sizes.json.
+let minFile: URL = {
+    let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("EdgeSync")
+    try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+    return d.appendingPathComponent("min-sizes.json")
+}()
+var minSizes: [String: [CGFloat]] = {
+    guard let d = try? Data(contentsOf: minFile),
+          let j = try? JSONSerialization.jsonObject(with: d) as? [String: [Double]] else { return [:] }
+    return j.mapValues { $0.map { CGFloat($0) } }
+}()
+func learnMin(_ w: W, requested r: CGRect, got: CGRect) {
+    let b = bundle(w.pid); guard !b.isEmpty else { return }
+    // Solo el patrón de "tamaño mínimo": quedó donde se pidió (posición) pero más grande. Si la
+    // posición tampoco cuadra, la app estaba ocupada (p. ej. Electron tras un arrastre): no se aprende.
+    guard abs(got.minX - r.minX) <= 4 || abs(got.maxX - r.maxX) <= 4,
+          abs(got.minY - r.minY) <= 4 || abs(got.maxY - r.maxY) <= 4 else { return }
+    let scr = visibleRect(at: CGPoint(x: got.midX, y: got.midY)) ?? got
+    var m = minSizes[b] ?? [0, 0]
+    var changed = false
+    if got.width > r.width + 4, got.width > m[0], got.width < scr.width * 0.8 { m[0] = got.width; changed = true }
+    if got.height > r.height + 4, got.height > m[1], got.height < scr.height * 0.8 { m[1] = got.height; changed = true }
+    guard changed else { return }
+    minSizes[b] = m
+    log("mínimo aprendido \(b): \(m)")
+    if let d = try? JSONSerialization.data(withJSONObject: minSizes.mapValues { $0.map { Double($0) } }) { try? d.write(to: minFile) }
+}
+func minSize(_ w: W) -> CGSize {
+    let m = minSizes[bundle(w.pid)] ?? [0, 0]
+    return CGSize(width: m[0], height: m[1])
+}
+func fits(_ w: W, _ r: CGRect) -> Bool {
+    let m = minSize(w); return m.width <= r.width + 4 && m.height <= r.height + 4
+}
+// ¿Cabe `w` en `cell` (aunque sea más grande, achicando a las de su columna/fila hasta su mínimo)?
+func canPlace(_ w: W, _ cell: CGRect, among: [W], except: Set<CGWindowID>) -> Bool {
+    if fits(w, cell) { return true }
+    guard let vis = visibleRect(at: CGPoint(x: cell.midX, y: cell.midY)) else { return true }
+    let area = work(vis), m = minSize(w)
+    let others = among.filter { !except.contains($0.id) && $0.id != w.id && !isFloating($0) && !userFloating.contains($0.id) &&
+                                vis.contains(CGPoint(x: $0.r.midX, y: $0.r.midY)) }
+    if m.height > cell.height + 4 {   // necesita más alto: las de su columna se achican
+        let col = others.filter { overlap(cell.minX, cell.maxX, $0.r.minX, $0.r.maxX) > 40 }
+        if m.height + col.reduce(0, { $0 + max(minSize($1).height, 100) + gap }) > area.height + 4 { return false }
+    }
+    if m.width > cell.width + 4 {     // necesita más ancho: las de su fila se achican
+        let row = others.filter { overlap(cell.minY, cell.maxY, $0.r.minY, $0.r.maxY) > 40 }
+        if m.width + row.reduce(0, { $0 + max(minSize($1).width, 100) + gap }) > area.width + 4 { return false }
+    }
+    return true
+}
+
 func isFloating(_ w: W) -> Bool {
     floating.contains(bundle(w.pid))
 }
@@ -885,7 +941,7 @@ func cellAtMouse() -> CGRect? {
 //   pegado al borde/esquina de la pantalla (últimos `replaceZone` px) → reemplazarla entera;
 //   en el resto → partir la celda en dos por el lado largo, la nueva en la mitad del mouse.
 let replaceZone: CGFloat = 70
-struct DropPlan { let rect: CGRect; let occupant: W?; let replace: Bool; let otherHalf: CGRect? }
+struct DropPlan { let rect: CGRect; let occupant: W?; let replace: Bool; let otherHalf: CGRect?; var ok: Bool = true }
 func dropPlan(_ cell: CGRect, moving: CGWindowID, among: [W]) -> DropPlan {
     let occupant = among.first { o in
         guard o.id != moving, !isFloating(o), !userFloating.contains(o.id) else { return false }
@@ -920,15 +976,26 @@ func dropPlan(_ cell: CGRect, moving: CGWindowID, among: [W]) -> DropPlan {
     }
     return DropPlan(rect: a, occupant: o, replace: false, otherHalf: b)
 }
-func previewFor(_ cell: CGRect, moving: CGWindowID) -> CGRect {
-    dropPlan(cell, moving: moving, among: Array(baseline.values)).rect
+// Plan + ¿se puede? (según los mínimos aprendidos). Partir que no quepa → se intenta reemplazar.
+func feasiblePlan(_ cell: CGRect, moving: W, among: [W]) -> DropPlan {
+    var p = dropPlan(cell, moving: moving.id, among: among)
+    if let o = p.occupant {
+        if !p.replace, let other = p.otherHalf, !(fits(moving, p.rect) && fits(o, other)) {
+            p = DropPlan(rect: cell.union(o.r), occupant: o, replace: true, otherHalf: nil)
+        }
+        p.ok = fits(moving, p.rect) || canPlace(moving, p.rect, among: among, except: [o.id])
+    } else {
+        p.ok = canPlace(moving, p.rect, among: among, except: [])
+    }
+    return p
 }
 
 var previewWin: NSWindow? = nil
 var previewShown: CGRect? = nil
 var lastAlt = false
-func showPreview(_ r: CGRect) {
-    if previewShown == r { return }
+var previewBad = false
+func showPreview(_ r: CGRect, bad: Bool = false) {
+    if previewShown == r && previewBad == bad { return }
     if previewWin == nil {
         let w = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
         w.isOpaque = false; w.backgroundColor = .clear; w.hasShadow = false
@@ -942,6 +1009,11 @@ func showPreview(_ r: CGRect) {
         w.contentView = v
         previewWin = w
     }
+    // morado = se puede; rojo = no cabe ahí (al soltar vuelve a su sitio)
+    let col = bad ? NSColor.systemRed : NSColor(red: 0xbb / 255.0, green: 0x9a / 255.0, blue: 0xf7 / 255.0, alpha: 1)
+    previewWin!.contentView?.layer?.backgroundColor = col.withAlphaComponent(bad ? 0.22 : 0.18).cgColor
+    previewWin!.contentView?.layer?.borderColor = col.withAlphaComponent(0.9).cgColor
+    previewBad = bad
     let mainH = NSScreen.screens[0].frame.height
     previewWin!.setFrame(NSRect(x: r.minX, y: mainH - r.maxY, width: r.width, height: r.height), display: true)
     previewWin!.orderFrontRegardless()
@@ -977,7 +1049,14 @@ func tick() {
         // mosaico nativo, que está apagado: macOS deshacía lo que EdgeSync acomodaba)
         // Encajar solo con ⌥ (se ve la vista previa); sin ⌥ la ventana se mueve libre (flotante)
         if target == nil, altAtRelease, let (w, cell) = snapTarget() {
-            let plan = dropPlan(cell, moving: w.id, among: Array(snapshot().values))
+            let plan = feasiblePlan(cell, moving: w, among: Array(snapshot().values))
+            if !plan.ok {   // recuadro rojo: no cabe en ningún lado ahí → vuelve a donde estaba
+                let back = place(w, w.r)
+                log("encajar \(w.id): no cabe (mínimos), vuelve a \(back)")
+                dragging = false; target = nil; moving = false
+                prev = snapshot()
+                return
+            }
             var cell = plan.rect
             log("encajar \(w.id) -> \(cell)\(plan.occupant.map { plan.replace ? " (reemplaza \($0.id))" : " (parte con \($0.id))" } ?? "")")
             if let o = plan.occupant {
@@ -1041,7 +1120,10 @@ func tick() {
     // (solo si de verdad se está moviendo una ventana: ⌥ + arrastrar texto no muestra nada)
     let altNow = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate)
     if altNow != lastAlt { log("⌥ \(altNow ? "presionada" : "suelta") durante el arrastre"); lastAlt = altNow }
-    if altNow, let c = cellAtMouse(), let mw = movedWindow(), !isFloating(mw) { showPreview(previewFor(c, moving: mw.id)) }
+    if altNow, let c = cellAtMouse(), let mw = movedWindow(), !isFloating(mw) {
+        let p = feasiblePlan(c, moving: mw, among: Array(baseline.values))
+        showPreview(p.rect, bad: !p.ok)
+    }
     else { hidePreview() }
     if moving { return }
     let cur = snapshot()

@@ -94,6 +94,9 @@ so helpers like `usable()`/margins are duplicated and must be kept in sync):
   external AX changes. Never press "Window → Move & Resize → Return to Previous Size" programmatically.
 - macOS may report no menu bar for a secondary display (`visibleFrame` top = 0): `usable()` uses the
   largest menu-bar height of all screens. Windows sit flush under the bar, `margin` 8 px elsewhere.
+- Minimum sizes are learned (`learnMin` in `place`, only when the app kept the requested position but
+  stayed bigger, and < 80 % of the screen) into `~/Library/Application Support/EdgeSync/min-sizes.json`;
+  `feasiblePlan` uses them to colour the snap preview red and to bounce a drop back.
 - Apps have minimum sizes (WhatsApp ~600 px tall, Spotify ~600 tall / wider with its queue panel);
   any placement must read back the real frame instead of trusting the requested one.
 - Window ids only grow; a window appearing after a Space switch is old (lower id), not new.
