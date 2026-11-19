@@ -886,7 +886,7 @@ func resolveAfterResize(_ t: W) {
 
 // Tras encajar: si la ventana quedó encima de otra del mosaico o fuera de la pantalla (mínimos que
 // aún no se conocían), se deshace todo: cada ventana que cambió vuelve a como estaba.
-func verifySnap(_ id: CGWindowID, before: [CGWindowID: W]) {
+func verifySnap(_ id: CGWindowID, before: [CGWindowID: W], floatingBefore: Set<CGWindowID>) {
     let now = snapshot()
     guard let t = now[id], let vis = visibleRect(at: CGPoint(x: t.r.midX, y: t.r.midY)) else { return }
     let area = work(vis)
@@ -902,7 +902,8 @@ func verifySnap(_ id: CGWindowID, before: [CGWindowID: W]) {
         if wid != id && userFloating.contains(wid) && before[wid] == nil { continue }
         place(cur, orig.r)
     }
-    // la arrastrada vuelve a su estado anterior (flotante si lo era)
+    // también las marcas de flotante vuelven a como estaban
+    userFloating = floatingBefore; saveFloating()
     prev = snapshot()
 }
 
@@ -1126,10 +1127,11 @@ func tick() {
             let old = w.r, id = w.id
             dragging = false; target = nil; moving = false
             let before = prev   // cómo estaba todo antes del arrastre
+            let floatingBefore = userFloating
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 settle(id, old: old, snapped: true); prev = snapshot()
                 // ¿quedó bien? (dar tiempo a los reintentos de apps lentas) Si no, deshacer todo
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { verifySnap(id, before: before) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { verifySnap(id, before: before, floatingBefore: floatingBefore) }
             }
             prev = baseline
             return
