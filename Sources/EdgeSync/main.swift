@@ -1007,6 +1007,14 @@ func dropPlan(_ cell: CGRect, moving: CGWindowID, among: [W]) -> DropPlan {
     }
     return DropPlan(rect: a, occupant: o, replace: false, otherHalf: b)
 }
+// Lugar que deja una ventana al moverla: su rectángulo recortado al área útil de su monitor (si se
+// salía de la pantalla por un mínimo, el lugar real es la parte visible)
+func vacated(_ r: CGRect) -> CGRect {
+    guard let vis = visibleRect(at: CGPoint(x: r.midX, y: r.midY)) else { return r }
+    let c = r.intersection(work(vis))
+    return c.isNull ? r : c
+}
+
 // Plan + ¿se puede? (según los mínimos aprendidos). Partir que no quepa → se intenta reemplazar.
 func feasiblePlan(_ cell: CGRect, moving: W, among: [W]) -> DropPlan {
     var p = dropPlan(cell, moving: moving.id, among: among)
@@ -1016,7 +1024,7 @@ func feasiblePlan(_ cell: CGRect, moving: W, among: [W]) -> DropPlan {
         }
         p.ok = fits(moving, p.rect) || canPlace(moving, p.rect, among: among, except: [o.id])
         // reemplazo desde una celda del mosaico: la desplazada va a esa celda y tiene que caber
-        if p.ok && p.replace && !userFloating.contains(moving.id) && !fits(o, moving.r) { p.ok = false }
+        if p.ok && p.replace && !userFloating.contains(moving.id) && !fits(o, vacated(moving.r)) { p.ok = false }
     } else {
         p.ok = canPlace(moving, p.rect, among: among, except: [])
     }
@@ -1096,7 +1104,7 @@ func tick() {
                 if plan.replace {
                     // la desplazada va a donde estaba la arrastrada si venía del mosaico; si no, flota
                     // donde estaba, visible
-                    let src = w.r
+                    let src = vacated(w.r)
                     let fromTile = !userFloating.contains(w.id) && fits(o, src) &&
                         (visibleRect(at: CGPoint(x: src.midX, y: src.midY)).map { looksTiled(src, $0, baseline.values.filter { $0.id != w.id && $0.id != o.id }.map { $0.r }) } ?? false)
                     var dest = CGRect(origin: src.origin, size: fromTile ? src.size : o.r.size)
