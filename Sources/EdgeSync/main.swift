@@ -839,7 +839,8 @@ func movedWindow() -> W? {
     return baseline.values.compactMap({ b -> W? in
         guard let c = cur[b.id], b.pid == front,
               abs(c.r.minX - b.r.minX) > 20 || abs(c.r.minY - b.r.minY) > 20 else { return nil }
-        return W(id: b.id, pid: b.pid, r: b.r)
+        // posición de antes del arrastre: la foto al presionar puede llegar tarde (ya movida)
+        return W(id: b.id, pid: b.pid, r: prev[b.id]?.r ?? b.r)
     }).first
 }
 func snapTarget() -> (W, CGRect)? {
@@ -880,28 +881,49 @@ func cellAtMouse() -> CGRect? {
 }
 
 // ---------- Vista previa del encaje (mientras se arrastra con ⌥) ----------
-// Lo que de verdad va a pasar: si la celda ya la ocupa otra ventana del mosaico, se parte en dos
-// por el lado largo y la nueva queda en la mitad del mouse (igual que settle()).
-func previewFor(_ cell: CGRect, moving: CGWindowID) -> CGRect {
-    let occupant = baseline.values.first { o in
+// Qué pasa al soltar con ⌥ sobre una celda: si la ocupa otra ventana del mosaico, el mouse decide:
+//   pegado al borde/esquina de la pantalla (últimos `replaceZone` px) → reemplazarla entera;
+//   en el resto → partir la celda en dos por el lado largo, la nueva en la mitad del mouse.
+let replaceZone: CGFloat = 70
+struct DropPlan { let rect: CGRect; let occupant: W?; let replace: Bool; let otherHalf: CGRect? }
+func dropPlan(_ cell: CGRect, moving: CGWindowID, among: [W]) -> DropPlan {
+    let occupant = among.first { o in
         guard o.id != moving, !isFloating(o), !userFloating.contains(o.id) else { return false }
         let i = o.r.intersection(cell)
         return !i.isNull && i.width * i.height > 0.5 * cell.width * cell.height
     }
-    guard let o = occupant else { return cell }
-    let u = cell.union(o.r)
+    guard let o = occupant else { return DropPlan(rect: cell, occupant: nil, replace: false, otherHalf: nil) }
     let mainH = NSScreen.screens[0].frame.height
     let m = NSEvent.mouseLocation, mp = CGPoint(x: m.x, y: mainH - m.y)
+    if let scr = NSScreen.screens.first(where: { NSMouseInRect(m, $0.frame, false) }) {
+        let f = CGRect(x: scr.frame.minX, y: mainH - scr.frame.maxY, width: scr.frame.width, height: scr.frame.height)
+        let nearSide = mp.x - f.minX <= replaceZone || f.maxX - mp.x <= replaceZone
+        let nearTopBottom = mp.y - f.minY <= replaceZone + 30 || f.maxY - mp.y <= replaceZone
+        // columna completa: basta el borde lateral; cuarto: la esquina (lateral + arriba/abajo)
+        let isColumn = cell.height > cell.width
+        if nearSide && (isColumn || nearTopBottom) {
+            return DropPlan(rect: cell, occupant: o, replace: true, otherHalf: nil)
+        }
+    }
+    let u = cell.union(o.r)
+    var a: CGRect, b: CGRect
     if u.width >= u.height {
         let w = (u.width - gap) / 2
-        return mp.x > u.midX ? CGRect(x: u.minX + w + gap, y: u.minY, width: w, height: u.height)
-                             : CGRect(x: u.minX, y: u.minY, width: w, height: u.height)
+        a = CGRect(x: u.minX, y: u.minY, width: w, height: u.height)
+        b = CGRect(x: u.minX + w + gap, y: u.minY, width: w, height: u.height)
+        if mp.x > u.midX { swap(&a, &b) }
     } else {
         let h = (u.height - gap) / 2
-        return mp.y > u.midY ? CGRect(x: u.minX, y: u.minY + h + gap, width: u.width, height: h)
-                             : CGRect(x: u.minX, y: u.minY, width: u.width, height: h)
+        a = CGRect(x: u.minX, y: u.minY, width: u.width, height: h)
+        b = CGRect(x: u.minX, y: u.minY + h + gap, width: u.width, height: h)
+        if mp.y > u.midY { swap(&a, &b) }
     }
+    return DropPlan(rect: a, occupant: o, replace: false, otherHalf: b)
 }
+func previewFor(_ cell: CGRect, moving: CGWindowID) -> CGRect {
+    dropPlan(cell, moving: moving, among: Array(baseline.values)).rect
+}
+
 var previewWin: NSWindow? = nil
 var previewShown: CGRect? = nil
 var lastAlt = false
@@ -955,7 +977,39 @@ func tick() {
         // mosaico nativo, que está apagado: macOS deshacía lo que EdgeSync acomodaba)
         // Encajar solo con ⌥ (se ve la vista previa); sin ⌥ la ventana se mueve libre (flotante)
         if target == nil, altAtRelease, let (w, cell) = snapTarget() {
-            log("encajar \(w.id) -> \(cell)")
+            let plan = dropPlan(cell, moving: w.id, among: Array(snapshot().values))
+            var cell = plan.rect
+            log("encajar \(w.id) -> \(cell)\(plan.occupant.map { plan.replace ? " (reemplaza \($0.id))" : " (parte con \($0.id))" } ?? "")")
+            if let o = plan.occupant {
+                if plan.replace {
+                    // la desplazada va a donde estaba la arrastrada si venía del mosaico; si no, flota
+                    // donde estaba, visible
+                    let src = w.r
+                    let fromTile = !userFloating.contains(w.id) &&
+                        (visibleRect(at: CGPoint(x: src.midX, y: src.midY)).map { looksTiled(src, $0, baseline.values.filter { $0.id != w.id && $0.id != o.id }.map { $0.r }) } ?? false)
+                    let g2 = place(o, CGRect(origin: src.origin, size: fromTile ? src.size : o.r.size))
+                    if !fromTile { userFloating.insert(o.id); saveFloating() }
+                    if let a = axWindow(o) { AXUIElementPerformAction(a, kAXRaiseAction as CFString) }
+                    log("  reemplazada \(o.id) -> \(g2)\(fromTile ? "" : " (flotante)")")
+                } else if let other = plan.otherHalf {
+                    // ¿caben las dos en media celda? (tamaños mínimos) Si no, reemplazo en vez de partir
+                    let g2 = place(o, other)
+                    let g1 = place(w, cell)
+                    func fits(_ g: CGRect, _ r: CGRect) -> Bool { g.width <= r.width + 4 && g.height <= r.height + 4 }
+                    if fits(g1, cell) && fits(g2, other) {
+                        log("  la otra mitad \(o.id) -> \(g2)")
+                    } else {
+                        let full = cell.union(other)
+                        let src = w.r
+                        let fromTile = !userFloating.contains(w.id) &&
+                            (visibleRect(at: CGPoint(x: src.midX, y: src.midY)).map { looksTiled(src, $0, baseline.values.filter { $0.id != w.id && $0.id != o.id }.map { $0.r }) } ?? false)
+                        let g3 = place(o, CGRect(origin: src.origin, size: fromTile ? src.size : o.r.size))
+                        if !fromTile { userFloating.insert(o.id); saveFloating() }
+                        log("  no caben en media celda (mínimos): reemplazo, \(o.id) -> \(g3)")
+                        cell = full
+                    }
+                }
+            }
             var got = place(w, cell)
             // No cabe en la celda (tamaño mínimo, p. ej. Spotify ≥ 600 px de alto): pegarla a la
             // esquina/borde elegido; las vecinas le ceden lo que falta en settle()

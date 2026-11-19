@@ -10,8 +10,11 @@ SIP**. You place windows yourself; EdgeSync keeps them together:
   with ⌥ held to snap. Zones by mouse position: left/right quarter of the screen → top third =
   quarter, middle = full-height column, bottom third = quarter; centre touching the top = full
   screen. Without ⌥ (or outside the zones) the window just moves and becomes floating.
-- **Make room**: windows covered by the dropped one shrink on the axis where they lose least;
-  dropping onto an occupied cell splits it in two (the new window takes the half under the mouse).
+- **Make room**: windows covered by the dropped one shrink on the axis where they lose least.
+  Dropping onto an occupied cell: with the mouse at the screen corner/edge (last 70 px) the window
+  **replaces** it (the old one goes where the dragged one came from, or floats); elsewhere the cell is
+  **split** and the new window takes the half under the mouse (falls back to replacing if minimum
+  sizes don't fit). The preview shows which.
 - **New windows** open floating, centred on the display under the mouse; you place them.
 - **Floating windows**: a window dropped outside the zones is remembered as floating; the tiled
   windows left behind are re-laid out. Closing a tiled window re-lays out its display too.
