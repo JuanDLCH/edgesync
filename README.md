@@ -23,8 +23,9 @@ SIP**. You place windows yourself; EdgeSync keeps them together:
   sizes don't fit). The preview shows which, and turns **red** when the window can't fit there at
   all (not even shrinking its column/row neighbours to their minimums); dropping on red puts it back.
   At most two windows per quarter: a window that is already half a quarter can only be replaced.
-- **Fill what's left**: after a move, a tiled window with free space beside it grows to the largest
-  free standard cell around it (quarter, half or full screen): the half left alone takes the whole
+- **Fill what's left**: after a move or close, a tiled window with free space beside it grows to the largest
+  free standard cell around it (quarter, column or full screen; the window you just dropped stays
+  put). Same when a window closes; if no neighbour can fill the hole, the display is re-laid out: the half left alone takes the whole
   quarter back, and the window above stretches down when the one below leaves.
   Minimum sizes are learned per app the first time one refuses a size
   (`~/Library/Application Support/EdgeSync/min-sizes.json`).

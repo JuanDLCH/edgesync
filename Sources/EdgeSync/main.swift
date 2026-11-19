@@ -405,23 +405,24 @@ func regrid(_ vis: CGRect) {
 
 // Tras encajar/mover: una ventana encajada que quedó con espacio libre al lado (p. ej. la otra
 // mitad de su cuarto se fue, o la de debajo) crece a la celda normal más grande que la contiene
-// (cuarto, mitad o pantalla) sin pisar a ninguna otra. Así la que queda a medias recupera el
+// (cuarto, columna o pantalla; no filas: los mosaicos son por columnas, la de arriba se estira hacia abajo) sin pisar a ninguna otra. Así la que queda a medias recupera el
 // ancho, y la de arriba se estira hacia abajo.
 func standardCells(_ vis: CGRect) -> [CGRect] {
     let v = work(vis), hw = (v.width - gap) / 2, hh = (v.height - gap) / 2
     return [v,
             CGRect(x: v.minX, y: v.minY, width: hw, height: v.height), CGRect(x: v.minX + hw + gap, y: v.minY, width: hw, height: v.height),
-            CGRect(x: v.minX, y: v.minY, width: v.width, height: hh), CGRect(x: v.minX, y: v.minY + hh + gap, width: v.width, height: hh),
             CGRect(x: v.minX, y: v.minY, width: hw, height: hh), CGRect(x: v.minX + hw + gap, y: v.minY, width: hw, height: hh),
             CGRect(x: v.minX, y: v.minY + hh + gap, width: hw, height: hh), CGRect(x: v.minX + hw + gap, y: v.minY + hh + gap, width: hw, height: hh)]
 }
-func expandLone(_ vis: CGRect) {
+@discardableResult
+func expandLone(_ vis: CGRect, except: CGWindowID? = nil) -> Bool {
+    var grew = false
     let cells = standardCells(vis)
     var wins = snapshot().values.filter { vis.contains(CGPoint(x: $0.r.midX, y: $0.r.midY)) && !isFloating($0) && !userFloating.contains($0.id) }
     var changed = true, rounds = 0
     while changed && rounds < 4 {
         changed = false; rounds += 1
-        for i in wins.indices {
+        for i in wins.indices where wins[i].id != except {   // la recién puesta queda donde la eligió el usuario
             let w = wins[i]
             let rest = wins.filter { $0.id != w.id }.map { $0.r }
             let fitsIn = cells.filter { c in c.insetBy(dx: -14, dy: -14).contains(w.r) &&
@@ -431,9 +432,10 @@ func expandLone(_ vis: CGRect) {
             let got = place(w, c)
             log("  crece \(w.id) a la celda libre -> \(got)")
             wins[i] = W(id: w.id, pid: w.pid, r: got)
-            changed = true
+            changed = true; grew = true
         }
     }
+    return grew
 }
 
 var lastDragEnd = Date.distantPast   // cuándo soltó el usuario el botón tras arrastrar
@@ -546,7 +548,7 @@ func settle(_ id: CGWindowID, old: CGRect? = nil, snapped: Bool = false) {
 
     // Se movió de un sitio encajado a otro: lo que quedó con espacio libre crece (ver expandLone)
     if moved, !wasFloating, let old = old, let ovis = visibleRect(at: CGPoint(x: old.midX, y: old.midY)) {
-        expandLone(ovis)
+        expandLone(ovis, except: id)
     }
 
     // 2. Huecos pequeños: estirar la puesta hasta la vecina o el borde de la pantalla
@@ -805,9 +807,15 @@ func watch() {
         // (p. ej. una ventana nueva que se acomodó con ⌥G sin pasar por EdgeSync)
         if wasFloating && !looksTiled(w.r, vis, prev.values.filter { $0.id != id }.map { $0.r }) { continue }
         do {
-            log("cerrada \(id) \(w.r): reorganizar")
             axCache = [:]
-            regrid(vis); regridded = true
+            // primero que las vecinas ocupen el hueco (la otra mitad recupera su cuarto, la de
+            // arriba se estira); si nadie pudo, reorganizar todo el monitor
+            expandLone(vis)
+            let tiled = snapshot().values.filter { vis.contains(CGPoint(x: $0.r.midX, y: $0.r.midY)) && !isFloating($0) && !userFloating.contains($0.id) }
+            let covered = tiled.contains { intersects($0.r, w.r) }
+            log("cerrada \(id) \(w.r): \(covered ? "hueco ocupado por vecinas" : "reorganizar")")
+            if !covered { regrid(vis) }
+            regridded = true
         }
     }
     if regridded { snap = snapshot(); pending = nil; return }
